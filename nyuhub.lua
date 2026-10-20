@@ -27,7 +27,7 @@ end
 
 local Config = {
     Name = "NYU HUB",
-    Subtitle = "Foundation v1.0.0",
+    Subtitle = "Foundation v1.1.0",
 
     Tabs = {
         Home = "Home",
