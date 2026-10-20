@@ -61,7 +61,7 @@ HomeTab:CreateButton({
     callback = function()
         Window:Notify({
             title = "NYU HUB",
-            content = "Foundation berhasil merespons!",
+            content = "ANJENG KAU",
         })
     end,
 })
@@ -102,7 +102,7 @@ SettingsTab:CreateButton({
     callback = function()
         Window:Notify({
             title = Config.Name,
-            content = "Version " .. "1.0.0",
+            content = "Version " .. "1.1.0",
         })
     end,
 })
