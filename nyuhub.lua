@@ -117,6 +117,51 @@ local UtilitiesTab = Window:CreateTab({
     name = Config.Tabs.Utilities,
 })
 
+UtilitiesTab:CreateButton({
+    name = "Test Utilities",
+    description = "Memeriksa apakah komponen tab berfungsi",
+
+    callback = function()
+        Window:Notify({
+            title = "NYU HUB",
+            content = "Tab Utilities berfungsi!",
+        })
+    end,
+})
+
+print("[NYU HUB] Utilities test button created.")
+
+
+-- =========================================
+-- TEST: WALK SPEED
+-- =========================================
+
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+UtilitiesTab:CreateSlider({
+    name = "Walk Speed Test",
+    range = { 16, 50 },
+    increment = 1,
+    value = 16,
+
+    callback = function(value)
+        local character = LocalPlayer.Character
+        local humanoid = character
+            and character:FindFirstChildOfClass("Humanoid")
+
+        if humanoid then
+            humanoid.WalkSpeed = value
+            print("[NYU HUB] Walk Speed:", value)
+        else
+            warn("[NYU HUB] Humanoid tidak ditemukan.")
+        end
+    end,
+})
+
+print("[NYU HUB] Walk Speed test component created.")
+
+
 -- -----------------------------------------
 -- 6.1 PLAYER INFORMATION
 -- -----------------------------------------
