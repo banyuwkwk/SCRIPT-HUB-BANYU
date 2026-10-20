@@ -61,7 +61,7 @@ HomeTab:CreateButton({
     callback = function()
         Window:Notify({
             title = "NYU HUB",
-            content = "ANJENG KAU",
+            content = "AKU ALOK FF",
         })
     end,
 })
@@ -97,12 +97,12 @@ local SettingsTab = Window:CreateTab({
 
 SettingsTab:CreateButton({
     name = "Check Version",
-    description = "Menampilkan versi NYU HUB",
+    description = "BANYU",
 
     callback = function()
         Window:Notify({
             title = Config.Name,
-            content = "Version " .. "1.1.0",
+            content = "Version " .. "1.1.1",
         })
     end,
 })
