@@ -1,6 +1,6 @@
 local UniversalTab = _G.Window:MakeTab({
     Name = "Universal Mods",
-    Icon = "rbxassetid://4483345998",
+    Icon = nil, -- Mengubah ikon menjadi nil agar tidak eror
     PremiumOnly = false
 })
 

@@ -1,6 +1,6 @@
 local RintamaTab = _G.Window:MakeTab({
     Name = "Rintama Cheats",
-    Icon = "rbxassetid://4483345998",
+    Icon = nil, -- Diubah ke nil agar aman dari blokir asset
     PremiumOnly = false
 })
 
@@ -8,7 +8,7 @@ local RintamaTab = _G.Window:MakeTab({
 -- SEKSI 1: COMBAT & MOVEMENT
 -- ====================================================================
 
--- Fitur Anti-Ragdoll (Bisa tetap bergerak meski dipukul/jatuh)
+-- Fitur Anti-Ragdoll
 local AntiRagdollEnabled = false
 RintamaTab:AddToggle({
     Name = "Anti-Ragdoll (Bisa Tetap Gerak)",
@@ -86,10 +86,4 @@ RintamaTab:AddButton({
         getgenv().MyScriptHubLoaded = false
         OrionLib:Destroy()
     end
-})
-
-OrionLib:MakeNotification({
-    Name = "Rintama High Loaded",
-    Content = "Modul khusus Rintama High berhasil diaktifkan!",
-    Time = 5
 })
