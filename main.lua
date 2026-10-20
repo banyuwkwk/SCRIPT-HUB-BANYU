@@ -1,40 +1,62 @@
--- 1. Anti Multi-Load (Mencegah menu menumpuk jika dijalankan berulang kali)
-if getgenv().MyScriptHubLoaded then 
-    print("Script Hub sudah aktif!")
-    return 
-end
+-- 1. Anti Multi-Load (Membersihkan status agar bisa dijalankan ulang di server yang sama)
+getgenv().MyScriptHubLoaded = nil 
+task.wait(0.1)
 getgenv().MyScriptHubLoaded = true
 
--- 2. Memuat UI Library (Orion Library Resmi via tautan repositori terbaru Anda)
-local OrionLib = loadstring(game:HttpGet(('https://raw.githubusercontent.com/OrionLibrary/Orion/refs/heads/main/source.lua')))()
+print("[SYSTEM] Memulai pemuatan Script Hub...")
 
--- 3. Membuat Window Utama GUI
-_G.Window = OrionLib:MakeWindow({
-    Name = "Rintama Multi-Hub V1", 
-    HidePremium = true, 
-    SaveConfig = false
-})
-
--- 4. Alamat Base Repositori GitHub Anda (SUDAH DIPERBAIKI: Mengarah ke folder utama, bukan file lua)
-local BaseURL = "https://raw.githubusercontent.com/banyuwkwk/SCRIPT-HUB-BANYU/refs/heads/main/"
-
--- 5. Memuat Skrip Universal (Fitur umum yang selalu muncul di semua game)
-pcall(function()
-    loadstring(game:HttpGet(BaseURL .. "games/universal.lua"))()
+-- 2. Memuat UI Library (Menggunakan Tautan Utama & Cadangan jika tautan pertama gagal)
+local OrionLib
+local suksesUI, errUI = pcall(function()
+    return loadstring(game:HttpGet('https://raw.githubusercontent.com/shlexware/Orion/main/source'))()
 end)
 
--- 6. Deteksi Otomatis ID Game (Place ID)
+-- Jika tautan utama gagal, gunakan tautan cermin alternatif (Mobile/Universal Fix)
+if not suksesUI or not OrionLib then
+    warn("[WARNING] Tautan utama Orion gagal, mencoba menggunakan server cadangan...")
+    local suksesCadangan, errCadangan = pcall(function()
+        OrionLib = loadstring(game:HttpGet('https://raw.githubusercontent.com/Seven7-lua/Roblox/refs/heads/main/Librarys/Orion/Orion.lua'))()
+    end)
+    
+    if not suksesCadangan or not OrionLib then
+        error("[CRITICAL ERROR] Gagal total memuat Orion Library! Eksekutor Anda memblokir unduhan UI. Pesan eror: " .. tostring(errCadangan))
+        return
+    end
+end
+
+print("[SYSTEM] Orion UI Library Berhasil Terpasang!")
+
+-- 3. Membuat Window Utama GUI
+local Window = OrionLib:MakeWindow({
+    Name = "Rintama Multi-Hub V1", 
+    HidePremium = true, 
+    SaveConfig = false,
+    IntroEnabled = false -- Mematikan animasi intro agar memuat lebih cepat & tidak macet
+})
+
+-- 4. Alamat Base Repositori GitHub Anda (Sudah benar untuk folder utama)
+local BaseURL = "https://githubusercontent.com"
+
+-- 5. Memuat Skrip Universal 
+local suksesUni, errUni = pcall(function()
+    loadstring(game:HttpGet(BaseURL .. "games/universal.lua"))()
+end)
+if not suksesUni then
+    warn("[ERROR] File universal.lua gagal diunduh dari GitHub Anda: " .. tostring(errUni))
+end
+
+-- 6. Deteksi Otomatis ID Game dan Eksekusi Modul Game
 local PlaceId = game.PlaceId
 local GameScriptURL = BaseURL .. "games/" .. tostring(PlaceId) .. ".lua"
 
--- 7. Eksekusi Skrip Khusus Game Jika Tersedia
-local sukses, err = pcall(function()
+local suksesGame, errGame = pcall(function()
     loadstring(game:HttpGet(GameScriptURL))()
 end)
 
-if not sukses then
-    print("Tidak ada skrip khusus untuk Game ID: " .. tostring(PlaceId) .. ". Berjalan dalam mode universal.")
+if not suksesGame then
+    warn("[INFO] Tidak ada skrip khusus untuk Game ID: " .. tostring(PlaceId) .. " atau file .lua Anda di folder games salah nama.")
 end
 
--- 8. Menjalankan Inisialisasi Akhir GUI
+-- 7. Menjalankan Inisialisasi Akhir GUI
 OrionLib:Init()
+print("[SYSTEM] Script Hub Selesai Diinisialisasi!")
