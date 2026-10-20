@@ -229,6 +229,61 @@ UtilitiesTab:CreateButton({
     end,
 })
 
+-- -----------------------------------------
+-- 6.5 WALK SPEED
+-- -----------------------------------------
+
+local NORMAL_WALK_SPEED = 16
+local MAX_WALK_SPEED = 50
+
+UtilitiesTab:CreateSlider({
+    name = "Walk Speed",
+    description = "Mengatur kecepatan berjalan karakter",
+    range = { NORMAL_WALK_SPEED, MAX_WALK_SPEED },
+    increment = 1,
+    value = NORMAL_WALK_SPEED,
+
+    callback = function(value)
+        local character = LocalPlayer.Character
+        local humanoid = character
+            and character:FindFirstChildOfClass("Humanoid")
+
+        if not humanoid then
+            warn("[NYU HUB] Humanoid tidak ditemukan.")
+            return
+        end
+
+        humanoid.WalkSpeed = value
+
+        print("[NYU HUB] Walk Speed:", value)
+    end,
+})
+
+UtilitiesTab:CreateButton({
+    name = "Reset Walk Speed",
+    description = "Mengembalikan kecepatan berjalan ke 16",
+
+    callback = function()
+        local character = LocalPlayer.Character
+        local humanoid = character
+            and character:FindFirstChildOfClass("Humanoid")
+
+        if not humanoid then
+            warn("[NYU HUB] Humanoid tidak ditemukan.")
+            return
+        end
+
+        humanoid.WalkSpeed = NORMAL_WALK_SPEED
+
+        Window:Notify({
+            title = "NYU HUB",
+            content = "Walk Speed dikembalikan ke 16.",
+        })
+
+        print("[NYU HUB] Walk Speed reset:", NORMAL_WALK_SPEED)
+    end,
+})
+
 -- =========================================
 -- 7. INITIALIZATION
 -- =========================================
