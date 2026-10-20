@@ -5,27 +5,39 @@
     Repository: SCRIPT-HUB-BANYU
 ]]
 
-local NyuHub = {
-    Name = "Nyu Hub",
-    Version = "1.0.0",
-}
+local Players = game:GetService("Players")
 
-function NyuHub.getInfo()
-    return {
-        name = NyuHub.Name,
-        version = NyuHub.Version,
-        status = "Initialized",
-    }
+local Config = require(script.Parent.config)
+local UI = require(script.Parent.ui)
+
+local NyuHub = {}
+
+function NyuHub.init()
+    local player = Players.LocalPlayer
+
+    if not player then
+        warn("[Nyu Hub] LocalPlayer tidak tersedia.")
+        return
+    end
+
+    local success, result = pcall(function()
+        return UI.create(player, Config)
+    end)
+
+    if not success then
+        warn("[Nyu Hub] UI gagal dimuat:", result)
+        return
+    end
+
+    print(
+        string.format(
+            "[%s] v%s berhasil diinisialisasi.",
+            Config.Name,
+            Config.Version
+        )
+    )
+
+    return result
 end
-
-function NyuHub.start()
-    print("================================")
-    print("       NYU HUB INITIALIZED      ")
-    print("================================")
-    print("Version:", NyuHub.Version)
-    print("Status: Ready")
-end
-
-NyuHub.start()
 
 return NyuHub
