@@ -5,7 +5,7 @@ if getgenv().MyScriptHubLoaded then
 end
 getgenv().MyScriptHubLoaded = true
 
--- 2. Memuat UI Library (Orion Library)
+-- 2. Memuat UI Library (Orion Library Resmi via tautan repositori terbaru Anda)
 local OrionLib = loadstring(game:HttpGet(('https://raw.githubusercontent.com/OrionLibrary/Orion/refs/heads/main/source.lua')))()
 
 -- 3. Membuat Window Utama GUI
@@ -15,9 +15,8 @@ _G.Window = OrionLib:MakeWindow({
     SaveConfig = false
 })
 
--- 4. Alamat Base Repositori GitHub Anda
--- GANTI "UsernameAnda" dan "NamaRepoAnda" sesuai dengan akun GitHub Anda!
-local BaseURL = "https://raw.githubusercontent.com/banyuwkwk/SCRIPT-HUB-BANYU/refs/heads/main/main.lua?token=GHSAT0AAAAAAEGJ3K2UKMQPCRX5LRVVHOXY2WXEG2Q"
+-- 4. Alamat Base Repositori GitHub Anda (SUDAH DIPERBAIKI: Mengarah ke folder utama, bukan file lua)
+local BaseURL = "https://raw.githubusercontent.com/banyuwkwk/SCRIPT-HUB-BANYU/refs/heads/main/"
 
 -- 5. Memuat Skrip Universal (Fitur umum yang selalu muncul di semua game)
 pcall(function()
