@@ -1044,9 +1044,19 @@ local function RunAutoFarmCycle()
             -- ----------------------------------------------------
             UpdateStatus("VERIFY_JOB", "Memverifikasi job aktif & membaca target penerima...")
             dInfo = InspectBuntaDialogue()
-            if dInfo.isOpen and dInfo.advanceBtn then
-                ClickGuiButton(dInfo.advanceBtn.instance)
+            local closeAttempts = 0
+            local maxClose = 5
+            while dInfo.isOpen and closeAttempts < maxClose and AutoFarmEnabled do
+                closeAttempts = closeAttempts + 1
+                if dInfo.advanceBtn then
+                    ClickGuiButton(dInfo.advanceBtn.instance)
+                elseif #dInfo.buttons > 0 then
+                    ClickGuiButton(dInfo.buttons[1].instance)
+                else
+                    -- no actionable button, wait for narration to finish
+                end
                 task.wait(0.5)
+                dInfo = InspectBuntaDialogue()
             end
         end
 
