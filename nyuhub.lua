@@ -215,57 +215,123 @@ local function UpdateStatus(state, detail, target)
     print(string.format("[NYU HUB] [%s] %s (Target: %s)", state, detailText, targetText))
 end
 
-local function GetRootPart()
-    local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-    return character:WaitForChild("HumanoidRootPart", 5)
+-- ====================================================
+-- KARAKTER & VERIFIKASI KEBERADAAN ROOT PART
+-- ====================================================
+
+local function WaitForCharacterReady(timeout)
+    timeout = timeout or 6
+    local start = tick()
+    while tick() - start < timeout do
+        if not AutoFarmEnabled then return nil, nil, nil end
+        local char = LocalPlayer.Character
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            local root = char:FindFirstChild("HumanoidRootPart")
+            if hum and root and hum.Health > 0 then
+                return char, root, hum
+            end
+        end
+        task.wait(0.2)
+    end
+    return nil, nil, nil
 end
 
--- Teleport dengan verifikasi jarak fisik aktual dan stabilisasi kecepatan
-local function TeleportToPosition(targetPos, maxWaitSeconds)
-    maxWaitSeconds = maxWaitSeconds or 6
-    local root = GetRootPart()
-    if not root then return false end
+local function GetRootPart()
+    local char, root = WaitForCharacterReady(3)
+    return root
+end
 
-    local character = LocalPlayer.Character
-    if not character then return false end
+-- ====================================================
+-- TELEPORT & VERIFIKASI KEDATANGAN TERPISAH (BUG 2)
+-- ====================================================
+
+local function TeleportTo(targetPos)
+    local char, root, hum = WaitForCharacterReady(5)
+    if not char or not root or not hum or hum.Health <= 0 then
+        warn("[NYU HUB TELEPORT] Karakter tidak tersedia atau sedang respawn.")
+        return false, "CharacterNotReady"
+    end
 
     local targetV3 = typeof(targetPos) == "CFrame" and targetPos.Position or targetPos
     local targetCF = typeof(targetPos) == "CFrame" and targetPos or CFrame.new(targetPos)
+    local initDist = (root.Position - targetV3).Magnitude
 
-    -- Nolkan kecepatan physics linear dan angular agar karakter tidak meluncur
+    print(string.format("[NYU HUB TELEPORT] Memulai navigasi ke target (%.1f, %.1f, %.1f) | Jarak awal: %.2f studs",
+        targetV3.X, targetV3.Y, targetV3.Z, initDist))
+
+    -- Nolkan kecepatan physics sebelum pivot agar karakter tidak meluncur
     pcall(function()
         root.AssemblyLinearVelocity = Vector3.zero
         root.AssemblyAngularVelocity = Vector3.zero
     end)
 
-    character:PivotTo(targetCF)
+    char:PivotTo(targetCF)
+    return true, targetV3
+end
 
-    -- Loop verifikasi jarak fisik aktual karakter
+local function VerifyArrival(targetPos, maxWaitSeconds, toleranceStuds)
+    maxWaitSeconds = maxWaitSeconds or 6
+    toleranceStuds = toleranceStuds or 8
+
+    local targetV3 = typeof(targetPos) == "CFrame" and targetPos.Position or targetPos
+    local targetCF = typeof(targetPos) == "CFrame" and targetPos or CFrame.new(targetPos)
+
     local elapsed = 0
-    while elapsed < maxWaitSeconds and AutoFarmEnabled do
-        task.wait(0.1)
-        elapsed = elapsed + 0.1
+    local consecutiveStable = 0
+    local requiredStable = 3
+    local lastDist = 999
 
-        root = GetRootPart()
-        if root then
+    while elapsed < maxWaitSeconds and AutoFarmEnabled do
+        task.wait(0.2)
+        elapsed = elapsed + 0.2
+
+        local char, root, hum = WaitForCharacterReady(1)
+        if char and root and hum and hum.Health > 0 then
             local dist = (root.Position - targetV3).Magnitude
-            if dist <= 12 then
-                -- Karakter sudah berada tepat di titik target
-                pcall(function()
-                    root.AssemblyLinearVelocity = Vector3.zero
-                    root.AssemblyAngularVelocity = Vector3.zero
-                end)
-                task.wait(0.6) -- Jeda stabilisasi posisi di server
-                return true
+            local vel = root.AssemblyLinearVelocity.Magnitude
+            lastDist = dist
+
+            print(string.format("[NYU HUB TELEPORT] Verifikasi kedatangan: Jarak = %.2f studs (toleransi %.1f), Kecepatan = %.2f studs/s [Stabil: %d/%d]",
+                dist, toleranceStuds, vel, consecutiveStable, requiredStable))
+
+            -- Syarat kedatangan: jarak dalam batas toleransi dan kecepatan fisik berhenti/sangat rendah
+            if dist <= toleranceStuds and vel < 3.0 then
+                consecutiveStable = consecutiveStable + 1
+                if consecutiveStable >= requiredStable then
+                    pcall(function()
+                        root.AssemblyLinearVelocity = Vector3.zero
+                        root.AssemblyAngularVelocity = Vector3.zero
+                    end)
+                    print(string.format("[NYU HUB TELEPORT] KEDATANGAN TERVERIFIKASI: Posisi stabil pada jarak %.2f studs dari target (%d checks stabil).", dist, consecutiveStable))
+                    return true, "Arrived", dist
+                end
+            else
+                consecutiveStable = 0
+                -- Re-pivot jika terjadi rubberband setelah jeda awal
+                if elapsed > 1.2 and dist > toleranceStuds then
+                    pcall(function()
+                        root.AssemblyLinearVelocity = Vector3.zero
+                    end)
+                    char:PivotTo(targetCF)
+                end
             end
-            -- Re-pivot jika terjadi rubberband
-            if elapsed > 1.5 and dist > 12 then
-                character:PivotTo(targetCF)
-            end
+        else
+            warn("[NYU HUB TELEPORT] Karakter tidak valid selama verifikasi posisi.")
+            consecutiveStable = 0
         end
     end
 
-    return false
+    warn(string.format("[NYU HUB TELEPORT] Timeout verifikasi kedatangan dalam %.1fs (Jarak akhir: %.1f studs, toleransi: %.1f).", maxWaitSeconds, lastDist, toleranceStuds))
+    return false, "Timeout", lastDist
+end
+
+local function TeleportAndVerifyArrival(targetPos, maxWaitSeconds, toleranceStuds)
+    local ok, reason = TeleportTo(targetPos)
+    if not ok then
+        return false, reason, 999
+    end
+    return VerifyArrival(targetPos, maxWaitSeconds, toleranceStuds)
 end
 
 local function FindNPCModel(npcName)
@@ -338,47 +404,69 @@ local function ClickGuiButton(btn)
     return clicked
 end
 
--- Interaksi khusus dan terarah hanya ke NPC Fujiwara Bunta
-local function InteractWithBunta(buntaModel)
-    if not buntaModel then return false end
+-- ====================================================
+-- INTERAKSI NPC FUJIWARA BUNTA (TERISOLASI & TERUKUR)
+-- ====================================================
 
-    local root = GetRootPart()
+local function TriggerBuntaInteraction(buntaModel)
+    if not buntaModel then return false, "NoModel" end
+
+    local char, root, hum = WaitForCharacterReady(2)
+    if not root then return false, "NoRoot" end
+
     local buntaPart = buntaModel:FindFirstChild("HumanoidRootPart")
         or buntaModel.PrimaryPart
         or buntaModel:FindFirstChild("Head")
         or buntaModel:FindFirstChildWhichIsA("BasePart")
 
-    -- Verifikasi jarak aman: pastikan karakter memang berada dekat Bunta (< 25 studs)
-    if root and buntaPart then
-        local dist = (root.Position - buntaPart.Position).Magnitude
-        if dist > 25 then
-            warn(string.format("[NYU HUB] Karakter masih berjarak %.1f studs dari Bunta. Interaksi ditunda.", dist))
-            return false
-        end
+    if not buntaPart then return false, "NoBuntaPart" end
+
+    -- Pastikan karakter benar-benar dekat (< 20 studs) sebelum interaksi dijalankan
+    local dist = (root.Position - buntaPart.Position).Magnitude
+    if dist > 20 then
+        warn(string.format("[NYU HUB INTERACT] Jarak karakter ke Bunta terlalu jauh (%.1f studs, toleransi 20 studs). Interaksi ditolak.", dist))
+        return false, "TooFar"
     end
 
-    local interacted = false
+    print(string.format("[NYU HUB INTERACT] Menjalankan mekanisme interaksi ke '%s' (Jarak aktual: %.2f studs)...", buntaModel.Name, dist))
 
-    -- 1. ProximityPrompt KHUSUS di dalam model Fujiwara Bunta
+    local triggeredPrompt = false
+    local triggeredClick = false
+    local triggeredMouseSim = false
+    local triggeredKey = false
+
+    -- 1. ProximityPrompt di dalam model Bunta
     local prompt = buntaModel:FindFirstChildWhichIsA("ProximityPrompt", true)
     if prompt and fireproximityprompt then
         pcall(function()
+            local origHold = prompt.HoldDuration
+            local origDist = prompt.MaxActivationDistance
+            local origLos = prompt.RequiresLineOfSight
+            prompt.HoldDuration = 0
+            prompt.MaxActivationDistance = 50
+            prompt.RequiresLineOfSight = false
             fireproximityprompt(prompt)
-            interacted = true
+            prompt.HoldDuration = origHold
+            prompt.MaxActivationDistance = origDist
+            prompt.RequiresLineOfSight = origLos
+            triggeredPrompt = true
         end)
     end
 
-    -- 2. ClickDetector KHUSUS di dalam model Fujiwara Bunta
+    -- 2. ClickDetector di dalam model Bunta
     for _, desc in ipairs(buntaModel:GetDescendants()) do
         if desc:IsA("ClickDetector") and fireclickdetector then
             pcall(function()
-                fireclickdetector(desc)
-                interacted = true
+                local origDist = desc.MaxActivationDistance
+                desc.MaxActivationDistance = 50
+                fireclickdetector(desc, 1)
+                desc.MaxActivationDistance = origDist
+                triggeredClick = true
             end)
         end
     end
 
-    -- 3. Arahkan kamera langsung ke Bunta dan lakukan simulasi klik mouse
+    -- 3. Hadapkan kamera langsung ke Bunta dan lakukan simulasi klik mouse
     pcall(function()
         local camera = workspace.CurrentCamera
         if camera and buntaPart then
@@ -386,37 +474,96 @@ local function InteractWithBunta(buntaModel)
             local screenPos, onScreen = camera:WorldToViewportPoint(buntaPart.Position)
             if onScreen then
                 local vim = game:GetService("VirtualInputManager")
+                vim:SendMouseMoveEvent(screenPos.X, screenPos.Y, game)
+                task.wait(0.04)
                 vim:SendMouseButtonEvent(screenPos.X, screenPos.Y, 0, true, game, 1)
-                task.wait(0.05)
+                task.wait(0.06)
                 vim:SendMouseButtonEvent(screenPos.X, screenPos.Y, 0, false, game, 1)
-                interacted = true
+                triggeredMouseSim = true
             end
         end
     end)
 
-    return interacted
+    -- 4. KeyCode E interaksi keyboard
+    pcall(function()
+        local vim = game:GetService("VirtualInputManager")
+        vim:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+        task.wait(0.05)
+        vim:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+        triggeredKey = true
+    end)
+
+    print(string.format("[NYU HUB INTERACT] Sinyal interaksi dikirim (Prompt: %s, ClickDetector: %s, MouseSim: %s, KeyE: %s).",
+        tostring(triggeredPrompt), tostring(triggeredClick), tostring(triggeredMouseSim), tostring(triggeredKey)))
+    return true, "Success"
 end
 
 -- ====================================================
--- DIALOGUE CONTAINER ISOLATION & STATE INSPECTOR
+-- DIALOGUE INSPECTOR & GENUINE VISIBILITY CHECK
 -- ====================================================
 
--- Mencari container ScreenGui/Frame spesifik milik dialog Fujiwara Bunta
+-- Memeriksa apakah elemen GUI benar-benar terlihat di layar (bukan frame tersembunyi/dormant)
+local function IsGuiObjectTrulyVisible(guiObj)
+    if not guiObj or not guiObj:IsA("GuiObject") then return false end
+    if not guiObj.Visible then return false end
+    if guiObj.AbsoluteSize.X <= 10 or guiObj.AbsoluteSize.Y <= 10 then return false end
+
+    -- Cek TextTransparency untuk elemen teks
+    if guiObj:IsA("TextLabel") or guiObj:IsA("TextButton") then
+        if guiObj.TextTransparency >= 0.9 then return false end
+        if #guiObj.Text == 0 then return false end
+    end
+
+    -- Cek CanvasGroup GroupTransparency jika elemen sendiri adalah CanvasGroup
+    if guiObj:IsA("CanvasGroup") and guiObj.GroupTransparency >= 0.9 then
+        return false
+    end
+
+    -- Cek posisi di layar (viewport) agar frame yang di-tween ke luar layar tidak terdeteksi aktif
+    local camera = workspace.CurrentCamera
+    if camera then
+        local vpSize = camera.ViewportSize
+        local pos = guiObj.AbsolutePosition
+        local size = guiObj.AbsoluteSize
+        if pos.X + size.X <= 0 or pos.Y + size.Y <= 0 or pos.X >= vpSize.X or pos.Y >= vpSize.Y then
+            return false
+        end
+    end
+
+    -- Periksa seluruh ancestor hingga ScreenGui
+    local current = guiObj.Parent
+    while current and not current:IsA("ScreenGui") and not current:IsA("Workspace") do
+        if current:IsA("GuiObject") then
+            if not current.Visible then return false end
+            if current.AbsoluteSize.X <= 0 or current.AbsoluteSize.Y <= 0 then return false end
+            if current:IsA("CanvasGroup") and current.GroupTransparency >= 0.9 then return false end
+        end
+        current = current.Parent
+    end
+
+    if current and current:IsA("ScreenGui") then
+        return current.Enabled
+    end
+
+    return true
+end
+
+-- Kalimat signature percakapan spesifik Bunta (tidak menggunakan kata tunggal umum)
+local BUNTA_CONVERSATION_SIGNATURES = {
+    "do you have a job for me",
+    "what do you got for sale",
+    "sure, i'll take it",
+    "actually nevermind",
+    "welcome to fujiwara tofu shop",
+    "are you sure you want to",
+    "good to know, now go out there",
+    "break the tofu",
+}
+
+-- Mencari container ScreenGui/Frame spesifik dialog Fujiwara Bunta
 local function FindBuntaDialogueContainer()
     local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
     if not playerGui then return nil, nil end
-
-    local signaturePhrases = {
-        "fujiwara",
-        "tofu",
-        "job for me",
-        "for sale",
-        "take it",
-        "nevermind",
-        "break the tofu",
-        "good to know",
-        "are you sure you want to",
-    }
 
     for _, gui in ipairs(playerGui:GetChildren()) do
         if gui:IsA("ScreenGui") and gui.Enabled then
@@ -424,11 +571,11 @@ local function FindBuntaDialogueContainer()
             -- Abaikan GUI Rayfield dan NYU HUB
             if not gName:find("rayfield") and not gName:find("nyu") then
                 for _, desc in ipairs(gui:GetDescendants()) do
-                    if (desc:IsA("TextLabel") or desc:IsA("TextButton")) and desc.Visible then
+                    if (desc:IsA("TextLabel") or desc:IsA("TextButton")) and IsGuiObjectTrulyVisible(desc) then
                         local text = desc.Text:lower()
-                        for _, sig in ipairs(signaturePhrases) do
+                        for _, sig in ipairs(BUNTA_CONVERSATION_SIGNATURES) do
                             if text:find(sig, 1, true) then
-                                -- Container ditemukan! Cari Frame pembungkus teratas di bawah ScreenGui atau gunakan ScreenGui
+                                -- Container ditemukan! Cari Frame pembungkus teratas di bawah ScreenGui
                                 local topFrame = desc
                                 while topFrame.Parent and topFrame.Parent ~= gui and topFrame.Parent:IsA("GuiObject") do
                                     topFrame = topFrame.Parent
@@ -452,6 +599,7 @@ local function InspectBuntaDialogue()
         return {
             isOpen = false,
             container = nil,
+            gui = nil,
             narration = "",
             buttons = {},
             optionJob = nil,
@@ -472,18 +620,18 @@ local function InspectBuntaDialogue()
     local advanceBtn = nil
 
     for _, desc in ipairs(container:GetDescendants()) do
-        if desc:IsA("TextLabel") and desc.Visible and #desc.Text > 0 then
+        if desc:IsA("TextLabel") and IsGuiObjectTrulyVisible(desc) and #desc.Text > 0 then
             local clean = desc.Text:gsub("%s+", " "):match("^%s*(.-)%s*$")
             if clean and #clean > 0 then
                 table.insert(narrationList, clean)
             end
-        elseif desc:IsA("GuiButton") and desc.Visible then
+        elseif desc:IsA("GuiButton") and IsGuiObjectTrulyVisible(desc) then
             local btnText = ""
             if desc:IsA("TextButton") and #desc.Text > 0 then
                 btnText = desc.Text
             else
                 for _, sub in ipairs(desc:GetDescendants()) do
-                    if sub:IsA("TextLabel") and sub.Visible and #sub.Text > 0 then
+                    if sub:IsA("TextLabel") and IsGuiObjectTrulyVisible(sub) and #sub.Text > 0 then
                         btnText = sub.Text
                         break
                     end
@@ -531,8 +679,13 @@ local function InspectBuntaDialogue()
     local isAcceptedNarration = lowerNarration:find("good to know", 1, true)
         or lowerNarration:find("break the tofu", 1, true)
 
+    -- Dialog dianggap terbuka hanya jika ada tombol interaktif atau narasi yang benar-benar aktif di layar
+    local genuinelyOpen = (#buttons > 0 or #narrationList > 0) and (
+        optJob ~= nil or optTakeIt ~= nil or optSale ~= nil or optNevermind ~= nil or advanceBtn ~= nil or isAcceptedNarration or #narrationList > 0
+    )
+
     return {
-        isOpen = true,
+        isOpen = genuinelyOpen,
         container = container,
         gui = screenGui,
         narration = fullNarration,
@@ -742,178 +895,154 @@ local function RunQuestDiagnostics()
     })
 end
 
--- =========================================
--- REFACTORED STATE MACHINE AUTO FARM
--- =========================================
+-- ====================================================
+-- STATE MACHINE AUTO FARM TERSTRUKTUR & TERTIB
+-- TELEPORT → VERIFY_ARRIVAL → INTERACT_WITH_NPC →
+-- VERIFY_DIALOG_OPEN → SELECT_DIALOG_OPTION →
+-- VERIFY_JOB → TELEPORT_TO_RECIPIENT
+-- ====================================================
 
 local function RunAutoFarmCycle()
     while AutoFarmEnabled do
         -- ----------------------------------------------------
-        -- STATE 1: RETURN_TO_START
+        -- TAHAP 1: TELEPORT MENUJU FUJIWARA BUNTA
         -- ----------------------------------------------------
-        UpdateStatus("RETURN_TO_START", "Navigasi menuju Fujiwara Bunta...")
-        local arrived = TeleportToPosition(BUNTA_POSITION, 6)
+        UpdateStatus("TELEPORT_TO_BUNTA", "Memulai teleport menuju Fujiwara Bunta...")
+
+        -- ----------------------------------------------------
+        -- TAHAP 2: VERIFY_ARRIVAL (Verifikasi Jarak & Kestabilan Posisi)
+        -- ----------------------------------------------------
+        UpdateStatus("VERIFY_ARRIVAL", "Memverifikasi kedatangan dan kestabilan posisi...")
+        local arrived, arriveReason = TeleportAndVerifyArrival(BUNTA_POSITION, 6, 8)
         if not arrived then
-            warn("[NYU HUB] Karakter belum mencapai posisi Bunta. Mengulang navigasi...")
-            task.wait(1)
+            warn("[NYU HUB] Kedatangan di lokasi Bunta belum stabil (" .. arriveReason .. "). Mengulang navigasi...")
+            task.wait(1.0)
             continue
         end
         if not AutoFarmEnabled then break end
 
         -- ----------------------------------------------------
-        -- STATE 2: VERIFY_POSITION
-        -- ----------------------------------------------------
-        UpdateStatus("VERIFY_POSITION", "Memverifikasi stabilitas posisi karakter...")
-        local root = GetRootPart()
-        local buntaModel = FindNPCModel(BUNTA_NAME)
-        if not buntaModel or not root then
-            warn("[NYU HUB] Bunta model atau karakter belum siap. Menunggu...")
-            task.wait(1.5)
-            continue
-        end
-
-        local distBunta = (root.Position - BUNTA_POSITION).Magnitude
-        if distBunta > 15 then
-            warn(string.format("[NYU HUB] Posisi karakter belum stabil (jarak: %.1f studs). Mengulang...", distBunta))
-            task.wait(1)
-            continue
-        end
-        task.wait(0.6)
-        if not AutoFarmEnabled then break end
-
-        -- ----------------------------------------------------
-        -- STATE 3: OPEN_DIALOG (Hanya jika dialog belum terbuka dan job belum aktif)
+        -- TAHAP 3: PERIKSA JOB AKTIF (Jika sudah ada, lewati interaksi)
         -- ----------------------------------------------------
         local activeTarget = DetectActiveDeliveryTarget()
         if activeTarget then
-            print(string.format("[NYU HUB] Job delivery sudah aktif sebelumnya untuk '%s'. Melewati pembukaan dialog.", activeTarget))
+            print(string.format("[NYU HUB] Job delivery '%s' sudah aktif. Langsung menuju tahap pengiriman.", activeTarget))
         else
-            local dInfo = InspectBuntaDialogue()
-            if not dInfo.isOpen then
-                UpdateStatus("OPEN_DIALOG", "Memicu interaksi NPC Fujiwara Bunta...")
-                local interactAttempts = 0
-                local maxAttempts = 4
-
-                while interactAttempts < maxAttempts and AutoFarmEnabled do
-                    interactAttempts = interactAttempts + 1
-                    print(string.format("[NYU HUB] Membuka dialog Bunta (percobaan #%d)...", interactAttempts))
-                    InteractWithBunta(buntaModel)
-
-                    local waitOpen = 0
-                    while waitOpen < 2.0 and AutoFarmEnabled do
-                        task.wait(0.4)
-                        waitOpen = waitOpen + 0.4
-                        dInfo = InspectBuntaDialogue()
-                        if dInfo.isOpen then
-                            break
-                        end
-                    end
-                    if dInfo.isOpen then break end
-                    task.wait(0.8)
-                end
-            end
-
-            if not AutoFarmEnabled then break end
-
-            dInfo = InspectBuntaDialogue()
-            if not dInfo.isOpen then
-                warn("[NYU HUB] Dialog Bunta gagal dibuka setelah percobaan interaksi. Mengulang dari navigasi...")
+            -- ----------------------------------------------------
+            -- TAHAP 4: INTERACT_WITH_NPC & VERIFY_DIALOG_OPEN
+            -- ----------------------------------------------------
+            local buntaModel = FindNPCModel(BUNTA_NAME)
+            if not buntaModel then
+                warn("[NYU HUB] Model NPC Bunta belum dimuat di Workspace. Menunggu...")
                 task.wait(1.5)
                 continue
             end
 
-            print(string.format("[NYU HUB DIALOG] Dialog aktif terdeteksi. Container: '%s' | Narasi: '%s'", dInfo.container.Name, dInfo.narration))
+            local dInfo = InspectBuntaDialogue()
+            local dialogOpened = dInfo.isOpen
+
+            if not dialogOpened then
+                local interactAttempts = 0
+                local maxInteract = 4
+
+                while interactAttempts < maxInteract and AutoFarmEnabled do
+                    interactAttempts = interactAttempts + 1
+                    UpdateStatus("INTERACT_WITH_NPC", string.format("Memicu interaksi NPC Bunta (percobaan #%d)...", interactAttempts))
+
+                    local ok, reason = TriggerBuntaInteraction(buntaModel)
+                    if not ok then
+                        warn("[NYU HUB] Gagal memicu interaksi: " .. reason)
+                    end
+
+                    -- VERIFY_DIALOG_OPEN: Menunggu dialog benar-benar muncul di layar
+                    UpdateStatus("VERIFY_DIALOG_OPEN", string.format("Menunggu dialog terbuka (percobaan #%d)...", interactAttempts))
+                    local waitElapsed = 0
+                    while waitElapsed < 2.5 and AutoFarmEnabled do
+                        task.wait(0.3)
+                        waitElapsed = waitElapsed + 0.3
+                        dInfo = InspectBuntaDialogue()
+                        if dInfo.isOpen then
+                            dialogOpened = true
+                            print(string.format("[NYU HUB] DIALOG TERBUKA TERVERIFIKASI! (Container: '%s', Narasi: '%s')", dInfo.container.Name, dInfo.narration))
+                            break
+                        end
+                    end
+
+                    if dialogOpened then break end
+                    warn(string.format("[NYU HUB] Dialog belum terbuka pada percobaan #%d. Jeda sebelum retry...", interactAttempts))
+                    task.wait(0.8)
+                end
+            else
+                print(string.format("[NYU HUB] Dialog Bunta sudah dalam keadaan terbuka. (Container: '%s')", dInfo.container.Name))
+            end
+
+            if not AutoFarmEnabled then break end
+
+            if not dialogOpened then
+                warn("[NYU HUB] Gagal membuka dialog NPC Bunta setelah 4 percobaan. Mengulang dari navigasi...")
+                task.wait(1.5)
+                continue
+            end
 
             -- ----------------------------------------------------
-            -- STATE 4: SELECT_JOB_OPTION ("Do you have a job for me?")
+            -- TAHAP 5: SELECT_DIALOG_OPTION (Tahap 1 & Tahap 2)
             -- ----------------------------------------------------
-            -- Jika dialog sudah berada di tahap konfirmasi atau sudah diterima, lewati tahap awal
-            if not dInfo.optionTakeIt and not dInfo.isJobAcceptedNarration then
-                UpdateStatus("SELECT_JOB_OPTION", "Memilih opsi 'Do you have a job for me?'...")
-                local s1Timeout = 6
-                local s1Elapsed = 0
-                local s1Success = false
+            dInfo = InspectBuntaDialogue()
 
-                while s1Elapsed < s1Timeout and AutoFarmEnabled do
+            -- Tahap 1: Pilih "Do you have a job for me?" jika tersedia
+            if dInfo.optionJob and not dInfo.optionTakeIt and not dInfo.isJobAcceptedNarration then
+                UpdateStatus("SELECT_OPTION_S1", "Memilih opsi: 'Do you have a job for me?'...")
+                print(string.format("[NYU HUB DIALOG] Menekan tombol opsi Tahap 1: '%s'", dInfo.optionJob.text))
+                ClickGuiButton(dInfo.optionJob.instance)
+                task.wait(0.8)
+            end
+
+            if not AutoFarmEnabled then break end
+
+            -- Tahap 2: Konfirmasi "Sure, I'll take it."
+            dInfo = InspectBuntaDialogue()
+            if not dInfo.isJobAcceptedNarration then
+                UpdateStatus("CONFIRM_JOB_S2", "Menunggu konfirmasi: 'Sure, I\\'ll take it.'...")
+                local s2Timeout = 6
+                local s2Elapsed = 0
+                local confirmed = false
+
+                while s2Elapsed < s2Timeout and AutoFarmEnabled do
                     dInfo = InspectBuntaDialogue()
-                    if dInfo.optionTakeIt or dInfo.isJobAcceptedNarration then
-                        s1Success = true
+                    if dInfo.isJobAcceptedNarration then
+                        confirmed = true
                         break
                     end
 
-                    if dInfo.optionJob then
-                        print(string.format("[NYU HUB DIALOG] [SELECT_JOB_OPTION] Menekan tombol: '%s'", dInfo.optionJob.text))
-                        ClickGuiButton(dInfo.optionJob.instance)
-                        s1Success = true
+                    if dInfo.optionTakeIt then
+                        print(string.format("[NYU HUB DIALOG] Menekan tombol opsi Tahap 2: '%s'", dInfo.optionTakeIt.text))
+                        ClickGuiButton(dInfo.optionTakeIt.instance)
+                        confirmed = true
                         task.wait(0.8)
                         break
                     elseif dInfo.advanceBtn then
-                        print(string.format("[NYU HUB DIALOG] [SELECT_JOB_OPTION] Menekan tombol pengantar: '%s'", dInfo.advanceBtn.text))
+                        print(string.format("[NYU HUB DIALOG] Menekan tombol lanjutan/skip: '%s'", dInfo.advanceBtn.text))
                         ClickGuiButton(dInfo.advanceBtn.instance)
-                        task.wait(0.6)
+                        task.wait(0.5)
                     end
 
-                    task.wait(0.4)
-                    s1Elapsed = s1Elapsed + 0.4
+                    task.wait(0.3)
+                    s2Elapsed = s2Elapsed + 0.3
                 end
 
                 if not AutoFarmEnabled then break end
-                if not s1Success then
-                    warn("[NYU HUB] Gagal memilih opsi tahap 1 ('Do you have a job for me?'). Mengulang siklus...")
+
+                if not confirmed then
+                    warn("[NYU HUB] Konfirmasi job gagal dipilih. Mengulang siklus...")
                     task.wait(1.5)
                     continue
                 end
             end
 
             -- ----------------------------------------------------
-            -- STATE 5: ADVANCE_DIALOG (Menuju 'Sure, I'll take it.')
+            -- TAHAP 6: VERIFY_JOB (Tutup dialog & pastikan target terdeteksi)
             -- ----------------------------------------------------
-            UpdateStatus("ADVANCE_DIALOG", "Menunggu tahap konfirmasi job...")
-            local advTimeout = 8
-            local advElapsed = 0
-
-            while advElapsed < advTimeout and AutoFarmEnabled do
-                dInfo = InspectBuntaDialogue()
-                if dInfo.optionTakeIt or dInfo.isJobAcceptedNarration then
-                    break
-                end
-                if dInfo.advanceBtn then
-                    print(string.format("[NYU HUB DIALOG] [ADVANCE_DIALOG] Menekan tombol lanjutan: '%s'", dInfo.advanceBtn.text))
-                    ClickGuiButton(dInfo.advanceBtn.instance)
-                    task.wait(0.6)
-                else
-                    task.wait(0.4)
-                end
-                advElapsed = advElapsed + 0.4
-            end
-
-            if not AutoFarmEnabled then break end
-
-            -- ----------------------------------------------------
-            -- STATE 6: CONFIRM_JOB ("Sure, I'll take it.")
-            -- ----------------------------------------------------
-            dInfo = InspectBuntaDialogue()
-            if not dInfo.isJobAcceptedNarration then
-                if dInfo.optionTakeIt then
-                    UpdateStatus("CONFIRM_JOB", "Memilih opsi konfirmasi: 'Sure, I\\'ll take it.'...")
-                    print(string.format("[NYU HUB DIALOG] [CONFIRM_JOB] Menekan tombol: '%s'", dInfo.optionTakeIt.text))
-                    ClickGuiButton(dInfo.optionTakeIt.instance)
-                    task.wait(0.8)
-                else
-                    warn("[NYU HUB] Opsi 'Sure, I\\'ll take it.' tidak ditemukan. Mengulang siklus...")
-                    task.wait(1.5)
-                    continue
-                end
-            else
-                print("[NYU HUB DIALOG] Narasi konfirmasi terdeteksi ('" .. dInfo.narration .. "'). Langsung verifikasi job.")
-            end
-
-            if not AutoFarmEnabled then break end
-
-            -- ----------------------------------------------------
-            -- STATE 7: VERIFY_JOB (Tutup dialog penutup jika ada)
-            -- ----------------------------------------------------
-            UpdateStatus("VERIFY_JOB", "Memverifikasi status job dan membaca penerima...")
+            UpdateStatus("VERIFY_JOB", "Memverifikasi job aktif & membaca target penerima...")
             dInfo = InspectBuntaDialogue()
             if dInfo.isOpen and dInfo.advanceBtn then
                 ClickGuiButton(dInfo.advanceBtn.instance)
@@ -921,13 +1050,13 @@ local function RunAutoFarmCycle()
             end
         end
 
-        -- Polling verifikasi target penerima dari data game
+        -- Polling verifikasi data quest aktif
         local detectedTarget = nil
         local detectSource = nil
-        local detectTimeout = 10
+        local verifyTimeout = 10
         local elapsed = 0
 
-        while elapsed < detectTimeout and AutoFarmEnabled do
+        while elapsed < verifyTimeout and AutoFarmEnabled do
             detectedTarget, detectSource = DetectActiveDeliveryTarget()
             if detectedTarget then
                 break
@@ -939,12 +1068,12 @@ local function RunAutoFarmCycle()
         if not AutoFarmEnabled then break end
 
         if not detectedTarget then
-            warn("[NYU HUB] Target job belum terverifikasi setelah dialog selesai. Mengulang siklus...")
+            warn("[NYU HUB] Target job belum terverifikasi dari game data. Mengulang siklus...")
             task.wait(2)
             continue
         end
 
-        print(string.format("[NYU HUB] VERIFIKASI SUKSES: Job diterima! Target = '%s' (via %s)", detectedTarget, detectSource))
+        print(string.format("[NYU HUB] VERIFIKASI JOB BERHASIL: Target = '%s' (via %s)", detectedTarget, detectSource))
         UpdateStatus("JOB_ACCEPTED", string.format("Target: %s (via %s)", detectedTarget, detectSource), detectedTarget)
         Window:Notify({
             title = Config.Name,
@@ -954,26 +1083,22 @@ local function RunAutoFarmCycle()
         if not AutoFarmEnabled then break end
 
         -- ----------------------------------------------------
-        -- STATE 8: DELIVER
+        -- TAHAP 7: TELEPORT_TO_RECIPIENT & DELIVER
         -- ----------------------------------------------------
-        UpdateStatus("DELIVER", "Teleport ke penerima: " .. detectedTarget, detectedTarget)
+        UpdateStatus("DELIVER_TO_RECIPIENT", "Navigasi menuju penerima: " .. detectedTarget, detectedTarget)
         local targetModel = FindNPCModel(detectedTarget)
         if targetModel then
             local targetPart = targetModel:FindFirstChild("HumanoidRootPart")
                 or targetModel.PrimaryPart
                 or targetModel:FindFirstChildWhichIsA("BasePart")
             if targetPart then
-                TeleportToPosition(targetPart.Position + Vector3.new(0, 0, 3), 5)
+                TeleportAndVerifyArrival(targetPart.Position + Vector3.new(0, 0, 3), 6, 10)
             end
         else
-            print(string.format("[NYU HUB] Model target '%s' belum ditemukan di workspace. Mengirim sinyal network.", detectedTarget))
+            print(string.format("[NYU HUB] Model target '%s' belum ditemukan di Workspace. Mengirim sinyal network.", detectedTarget))
         end
 
-        local waitReceiver = 0
-        while waitReceiver < 8 and AutoFarmEnabled do
-            task.wait(0.1)
-            waitReceiver = waitReceiver + 1
-        end
+        task.wait(0.6)
         if not AutoFarmEnabled then break end
 
         if targetModel then
@@ -984,26 +1109,21 @@ local function RunAutoFarmCycle()
         end
         TryCompleteDelivery(detectedTarget)
 
-        -- ----------------------------------------------------
-        -- STATE 9: VERIFY_DELIVERY
-        -- ----------------------------------------------------
-        UpdateStatus("VERIFY_DELIVERY", "Paket diserahkan ke " .. detectedTarget, detectedTarget)
+        UpdateStatus("DELIVERY_COMPLETE", "Paket diserahkan ke " .. detectedTarget, detectedTarget)
         task.wait(1.5)
         if not AutoFarmEnabled then break end
 
         -- ----------------------------------------------------
-        -- STATE 10: RETURN_TO_START (Kembali ke Bunta)
+        -- TAHAP 8: RETURN_TO_START & COOLDOWN
         -- ----------------------------------------------------
         UpdateStatus("RETURN_TO_START", "Kembali ke Fujiwara Bunta untuk job berikutnya...")
-        local backArrived = TeleportToPosition(BUNTA_POSITION, 6)
+        local backArrived, backReason = TeleportAndVerifyArrival(BUNTA_POSITION, 6, 8)
         if not backArrived then
-            warn("[NYU HUB] Verifikasi posisi kembali ke Bunta timeout. Melakukan re-pivot...")
-            TeleportToPosition(BUNTA_POSITION, 4)
+            warn("[NYU HUB] Kembali ke Bunta timeout (" .. backReason .. "). Melakukan re-pivot...")
+            TeleportAndVerifyArrival(BUNTA_POSITION, 4, 10)
         end
 
-        -- ----------------------------------------------------
-        -- STATE 11: COOLDOWN (Tunggu tracker quest lama bersih)
-        -- ----------------------------------------------------
+        -- Tunggu hingga data quest lama bersih sebelum siklus berikutnya
         UpdateStatus("COOLDOWN", "Menunggu quest lama bersih & persiapan siklus baru...")
         local clearTimer = 0
         while clearTimer < 4 and AutoFarmEnabled do
