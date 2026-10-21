@@ -180,22 +180,38 @@ local FarmThread = nil
 local BUNTA_POSITION = Vector3.new(-144.784, -11.521, 665.749)
 local BUNTA_NAME = "Fujiwara Bunta"
 
--- Status Display pada UI
-local StatusParagraph = UtilitiesTab:CreateParagraph({
-    title = "Auto Farm Status",
-    content = "State: IDLE\nTarget: -\nDetail: Siap digunakan.",
-})
+-- Status Display pada UI (Didukung penuh oleh Rayfield Gen2 Stable)
+local StatusComponent = nil
+
+pcall(function()
+    if UtilitiesTab.CreateText then
+        StatusComponent = UtilitiesTab:CreateText({
+            name = "Auto Farm Status",
+            text = "IDLE - Siap digunakan",
+        })
+    elseif UtilitiesTab.CreateDivider then
+        StatusComponent = UtilitiesTab:CreateDivider({
+            text = "Status: IDLE",
+        })
+    end
+end)
 
 local function UpdateStatus(state, detail, target)
     CurrentFarmState = state
     local targetText = target or "-"
     local detailText = detail or ""
-    pcall(function()
-        StatusParagraph:Set({
-            title = "Auto Farm Status: " .. state,
-            content = string.format("Target: %s\nDetail: %s", targetText, detailText),
-        })
-    end)
+    local summary = string.format("[%s] %s | Target: %s", state, detailText, targetText)
+
+    if StatusComponent then
+        pcall(function()
+            if StatusComponent.SetTitle and StatusComponent.Set then
+                StatusComponent:SetTitle("Status: " .. state)
+                StatusComponent:Set(string.format("Target: %s | Detail: %s", targetText, detailText))
+            elseif StatusComponent.Set then
+                StatusComponent:Set(summary)
+            end
+        end)
+    end
     print(string.format("[NYU HUB] [%s] %s (Target: %s)", state, detailText, targetText))
 end
 
@@ -603,12 +619,16 @@ local function RunQuestDiagnostics()
         end)
     end
 
-    pcall(function()
-        StatusParagraph:Set({
-            title = "Auto Farm Status: DIAGNOSTICS DONE",
-            content = string.format("Laporan dibuat (%d baris).\nCek F9 atau paste clipboard.", #lines),
-        })
-    end)
+    if StatusComponent then
+        pcall(function()
+            if StatusComponent.SetTitle and StatusComponent.Set then
+                StatusComponent:SetTitle("Status: DIAGNOSTICS DONE")
+                StatusComponent:Set(string.format("Laporan dibuat (%d baris). Cek F9 / clipboard.", #lines))
+            elseif StatusComponent.Set then
+                StatusComponent:Set(string.format("[DIAGNOSTICS DONE] %d baris dicatat", #lines))
+            end
+        end)
+    end
 
     Window:Notify({
         title = Config.Name,
