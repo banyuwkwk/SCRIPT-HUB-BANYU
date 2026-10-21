@@ -180,6 +180,25 @@ local FarmThread = nil
 local BUNTA_POSITION = Vector3.new(-144.784, -11.521, 665.749)
 local BUNTA_NAME = "Fujiwara Bunta"
 
+-- Status Display pada UI
+local StatusParagraph = UtilitiesTab:CreateParagraph({
+    title = "Auto Farm Status",
+    content = "State: IDLE\nTarget: -\nDetail: Siap digunakan.",
+})
+
+local function UpdateStatus(state, detail, target)
+    CurrentFarmState = state
+    local targetText = target or "-"
+    local detailText = detail or ""
+    pcall(function()
+        StatusParagraph:Set({
+            title = "Auto Farm Status: " .. state,
+            content = string.format("Target: %s\nDetail: %s", targetText, detailText),
+        })
+    end)
+    print(string.format("[NYU HUB] [%s] %s (Target: %s)", state, detailText, targetText))
+end
+
 local function GetRootPart()
     local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     return character:WaitForChild("HumanoidRootPart", 5)
@@ -219,13 +238,177 @@ local function FindNPCModel(npcName)
     return nil
 end
 
-local function TryTriggerPrompt(model)
-    if not model then return false end
-    local prompt = model:FindFirstChildWhichIsA("ProximityPrompt", true)
-    if prompt and fireproximityprompt then
-        fireproximityprompt(prompt)
-        return true
+local function ClickGuiButton(btn)
+    if not btn or not btn:IsA("GuiButton") then return false end
+
+    local clicked = false
+
+    -- Metode 1: firesignal (jika didukung executor)
+    if firesignal then
+        pcall(function()
+            firesignal(btn.MouseButton1Click)
+            clicked = true
+        end)
+        pcall(function()
+            firesignal(btn.Activated)
+            clicked = true
+        end)
     end
+
+    -- Metode 2: getconnections
+    if getconnections then
+        pcall(function()
+            for _, conn in ipairs(getconnections(btn.MouseButton1Click)) do
+                conn:Fire()
+                clicked = true
+            end
+            for _, conn in ipairs(getconnections(btn.Activated)) do
+                conn:Fire()
+                clicked = true
+            end
+        end)
+    end
+
+    -- Metode 3: VirtualInputManager (simulasi klik mouse langsung pada koordinat tombol)
+    pcall(function()
+        local vim = game:GetService("VirtualInputManager")
+        local absPos = btn.AbsolutePosition
+        local absSize = btn.AbsoluteSize
+        local centerX = absPos.X + absSize.X / 2
+        local centerY = absPos.Y + absSize.Y / 2
+        vim:SendMouseButtonEvent(centerX, centerY, 0, true, game, 1)
+        task.wait(0.05)
+        vim:SendMouseButtonEvent(centerX, centerY, 0, false, game, 1)
+        clicked = true
+    end)
+
+    return clicked
+end
+
+local function InteractWithBunta(buntaModel)
+    if not buntaModel then return false end
+
+    local interacted = false
+
+    -- 1. ProximityPrompt jika tersedia
+    local prompt = buntaModel:FindFirstChildWhichIsA("ProximityPrompt", true)
+    if prompt and fireproximityprompt then
+        pcall(function()
+            fireproximityprompt(prompt)
+            interacted = true
+        end)
+    end
+
+    -- 2. ClickDetector pada part NPC
+    for _, desc in ipairs(buntaModel:GetDescendants()) do
+        if desc:IsA("ClickDetector") and fireclickdetector then
+            pcall(function()
+                fireclickdetector(desc)
+                interacted = true
+            end)
+        end
+    end
+
+    -- 3. Klik simulasi mouse pada posisi visual NPC di layar
+    pcall(function()
+        local camera = workspace.CurrentCamera
+        local targetPart = buntaModel:FindFirstChild("Head")
+            or buntaModel:FindFirstChild("HumanoidRootPart")
+            or buntaModel.PrimaryPart
+            or buntaModel:FindFirstChildWhichIsA("BasePart")
+
+        if camera and targetPart then
+            local screenPos, onScreen = camera:WorldToViewportPoint(targetPart.Position)
+            if onScreen then
+                local vim = game:GetService("VirtualInputManager")
+                vim:SendMouseButtonEvent(screenPos.X, screenPos.Y, 0, true, game, 1)
+                task.wait(0.05)
+                vim:SendMouseButtonEvent(screenPos.X, screenPos.Y, 0, false, game, 1)
+                interacted = true
+            end
+        end
+    end)
+
+    return interacted
+end
+
+local function TryAcceptJobFromDialog()
+    local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if not playerGui then return false end
+
+    local acceptKeywords = {
+        "delivery", "tofu", "job", "kerja", "terima", "ambil",
+        "accept", "apply", "yes", "ya", "mulai", "start", "antar"
+    }
+
+    local matchedButton = nil
+
+    for _, gui in ipairs(playerGui:GetChildren()) do
+        if gui:IsA("ScreenGui") and gui.Enabled then
+            local gName = gui.Name:lower()
+            -- Abaikan GUI NYU HUB dan Rayfield
+            if not gName:find("rayfield") and not gName:find("nyu") then
+                for _, desc in ipairs(gui:GetDescendants()) do
+                    if desc:IsA("GuiButton") and desc.Visible then
+                        local btnText = ""
+                        if desc:IsA("TextButton") then
+                            btnText = desc.Text:lower()
+                        end
+                        local bName = desc.Name:lower()
+
+                        for _, kw in ipairs(acceptKeywords) do
+                            if btnText:find(kw) or bName:find(kw) then
+                                matchedButton = desc
+                                break
+                            end
+                        end
+
+                        if not matchedButton then
+                            for _, sub in ipairs(desc:GetDescendants()) do
+                                if sub:IsA("TextLabel") and sub.Visible then
+                                    local subText = sub.Text:lower()
+                                    for _, kw in ipairs(acceptKeywords) do
+                                        if subText:find(kw) then
+                                            matchedButton = desc
+                                            break
+                                        end
+                                    end
+                                end
+                                if matchedButton then break end
+                            end
+                        end
+
+                        if matchedButton then break end
+                    end
+                end
+            end
+        end
+        if matchedButton then break end
+    end
+
+    -- Jika kata kunci tidak cocok tapi dialog NPC sedang aktif dengan pilihan opsi
+    if not matchedButton then
+        for _, gui in ipairs(playerGui:GetChildren()) do
+            if gui:IsA("ScreenGui") and gui.Enabled then
+                local gName = gui.Name:lower()
+                if gName:find("dialog") or gName:find("interaction") or gName:find("talk") or gName:find("npc") then
+                    for _, desc in ipairs(gui:GetDescendants()) do
+                        if desc:IsA("GuiButton") and desc.Visible then
+                            matchedButton = desc
+                            break
+                        end
+                    end
+                end
+            end
+            if matchedButton then break end
+        end
+    end
+
+    if matchedButton then
+        print("[NYU HUB] Mengklik opsi dialog:", matchedButton.Name, matchedButton:IsA("TextButton") and ("'" .. matchedButton.Text .. "'") or "")
+        return ClickGuiButton(matchedButton)
+    end
+
     return false
 end
 
@@ -329,7 +512,7 @@ local function TryCompleteDelivery(targetNPCName)
             network:Fire("CompleteDeliveryQuest", targetNPCName)
         end)
         if success then
-            print("[NYU HUB] Invoked CompleteDeliveryQuest for:", targetNPCName)
+            print("[NYU HUB] Mengirim CompleteDeliveryQuest untuk:", targetNPCName)
             return true
         else
             warn("[NYU HUB] Error saat memanggil CompleteDeliveryQuest:", err)
@@ -341,43 +524,53 @@ local function TryCompleteDelivery(targetNPCName)
 end
 
 local function RunQuestDiagnostics()
-    print("========== [NYU HUB] QUEST & CLIENT DIAGNOSTICS ==========")
+    local lines = {}
+    local function logLine(txt)
+        table.insert(lines, txt)
+        print(txt)
+    end
+
+    logLine("========== [NYU HUB] QUEST & CLIENT DIAGNOSTICS ==========")
+
+    -- 1. Attributes
     local attrs = LocalPlayer:GetAttributes()
     local attrCount = 0
     for k, v in pairs(attrs) do
         attrCount = attrCount + 1
-        print(string.format("  [Player Attribute] %s = %s (%s)", tostring(k), tostring(v), typeof(v)))
+        logLine(string.format("  [Player Attribute] %s = %s (%s)", tostring(k), tostring(v), typeof(v)))
     end
     if attrCount == 0 then
-        print("  [Player Attribute] Tidak ada attribute pada LocalPlayer.")
+        logLine("  [Player Attribute] Tidak ada attribute pada LocalPlayer.")
     end
 
-    print("  [Player Children]:")
+    -- 2. Children / Folders
+    logLine("  [Player Children]:")
     for _, child in ipairs(LocalPlayer:GetChildren()) do
         if child:IsA("ValueBase") or child:IsA("Folder") or child:IsA("Configuration") then
-            print(string.format("    - %s (%s)", child.Name, child.ClassName))
+            logLine(string.format("    - %s (%s)", child.Name, child.ClassName))
             for _, subChild in ipairs(child:GetChildren()) do
                 if subChild:IsA("ValueBase") then
-                    print(string.format("        * %s = %s", subChild.Name, tostring(subChild.Value)))
+                    logLine(string.format("        * %s = %s", subChild.Name, tostring(subChild.Value)))
                 end
             end
         end
     end
 
+    -- 3. ScreenGuis & Visible Buttons
     local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
     if playerGui then
-        print("  [Quest-related ScreenGuis]:")
+        logLine("  [Active ScreenGuis & Buttons]:")
         for _, gui in ipairs(playerGui:GetChildren()) do
             if gui:IsA("ScreenGui") and gui.Enabled then
-                local nameLower = gui.Name:lower()
-                if nameLower:find("quest") or nameLower:find("job") or nameLower:find("delivery") or nameLower:find("mission") or nameLower:find("dialog") then
-                    print(string.format("    - Active GUI: %s", gui.Name))
+                local gName = gui.Name:lower()
+                if not gName:find("rayfield") and not gName:find("nyu") then
+                    logLine(string.format("    - ScreenGui: %s", gui.Name))
                     for _, desc in ipairs(gui:GetDescendants()) do
-                        if (desc:IsA("TextLabel") or desc:IsA("TextButton")) and desc.Visible then
-                            local text = desc.Text:gsub("%s+", " "):match("^%s*(.-)%s*$")
-                            if #text > 0 and #text < 80 then
-                                print(string.format("        [%s] '%s'", desc.Name, text))
-                            end
+                        if desc:IsA("GuiButton") and desc.Visible then
+                            local text = desc:IsA("TextButton") and desc.Text or "(ImageButton)"
+                            logLine(string.format("        [Button] %s: '%s'", desc.Name, text))
+                        elseif desc:IsA("TextLabel") and desc.Visible and #desc.Text > 0 and #desc.Text < 80 then
+                            logLine(string.format("        [Label] %s: '%s'", desc.Name, desc.Text))
                         end
                     end
                 end
@@ -385,24 +578,48 @@ local function RunQuestDiagnostics()
         end
     end
 
-    local workspace = game:GetService("Workspace")
-    local npcFolder = workspace:FindFirstChild("NPCs")
-    local buntaModel = npcFolder and npcFolder:FindFirstChild(BUNTA_NAME) or workspace:FindFirstChild(BUNTA_NAME)
+    -- 4. Status Bunta
+    local buntaModel = FindNPCModel(BUNTA_NAME)
     if buntaModel then
         local prompt = buntaModel:FindFirstChildWhichIsA("ProximityPrompt", true)
-        print(string.format("  [NPC %s] Ada di Workspace. ProximityPrompt: %s", BUNTA_NAME, prompt and (prompt.ActionText .. " [" .. prompt.ObjectText .. "]") or "TIDAK ADA"))
+        local cd = buntaModel:FindFirstChildWhichIsA("ClickDetector", true)
+        logLine(string.format("  [NPC %s] Ada. Prompt: %s | ClickDetector: %s", BUNTA_NAME, prompt and "YA" or "TIDAK", cd and "YA" or "TIDAK"))
     else
-        print(string.format("  [NPC %s] Belum ditemukan di Workspace.NPCs.", BUNTA_NAME))
+        logLine(string.format("  [NPC %s] Belum ditemukan di Workspace.", BUNTA_NAME))
     end
-    print("==========================================================")
+
+    logLine("==========================================================")
+
+    local fullReport = table.concat(lines, "\n")
+
+    -- Cetak ke warn agar selalu terlihat di console F9
+    warn("[NYU HUB DIAGNOSTICS] Ringkasan tercatat (" .. #lines .. " baris).")
+
+    -- Salin ke clipboard jika executor mendukung
+    if setclipboard then
+        pcall(function()
+            setclipboard(fullReport)
+            print("[NYU HUB] Laporan diagnostik disalin ke clipboard!")
+        end)
+    end
+
+    pcall(function()
+        StatusParagraph:Set({
+            title = "Auto Farm Status: DIAGNOSTICS DONE",
+            content = string.format("Laporan dibuat (%d baris).\nCek F9 atau paste clipboard.", #lines),
+        })
+    end)
+
+    Window:Notify({
+        title = Config.Name,
+        content = "Diagnostik selesai (" .. #lines .. " baris). Disalin ke clipboard!",
+    })
 end
 
 local function RunAutoFarmCycle()
     while AutoFarmEnabled do
         -- TAHAP 1: Navigasi ke Fujiwara Bunta
-        CurrentFarmState = "NAVIGATE_TO_BUNTA"
-        print("[NYU HUB] State:", CurrentFarmState)
-        
+        UpdateStatus("NAVIGATING_TO_BUNTA", "Teleport ke Fujiwara Bunta...")
         local root = GetRootPart()
         if not root then
             task.wait(1)
@@ -411,25 +628,40 @@ local function RunAutoFarmCycle()
 
         SafeTeleport(CFrame.new(BUNTA_POSITION))
 
-        local waitCount = 0
-        while waitCount < 10 and AutoFarmEnabled do
+        local waitPos = 0
+        while waitPos < 8 and AutoFarmEnabled do
             task.wait(0.1)
-            waitCount = waitCount + 1
+            waitPos = waitPos + 1
         end
         if not AutoFarmEnabled then break end
 
-        -- TAHAP 2: Interaksi dengan Fujiwara Bunta
-        CurrentFarmState = "INTERACTING_BUNTA"
-        print("[NYU HUB] State:", CurrentFarmState)
+        -- TAHAP 2: Buka Dialog NPC Bunta
+        UpdateStatus("OPENING_DIALOG", "Memicu dialog NPC Fujiwara Bunta...")
         local buntaModel = FindNPCModel(BUNTA_NAME)
         if buntaModel then
-            TryTriggerPrompt(buntaModel)
+            InteractWithBunta(buntaModel)
         end
 
-        -- TAHAP 3: Deteksi Target Quest Aktif (Dengan Timeout & Polling)
-        CurrentFarmState = "WAIT_FOR_JOB_TARGET"
-        print("[NYU HUB] State:", CurrentFarmState)
+        task.wait(0.5)
+        if not AutoFarmEnabled then break end
 
+        -- TAHAP 3: Pilih Opsi Terima Job di Dialog
+        UpdateStatus("ACCEPTING_JOB", "Mencari & memilih tombol terima job di dialog...")
+        local acceptAttempts = 0
+        local accepted = false
+        while acceptAttempts < 6 and AutoFarmEnabled do
+            accepted = TryAcceptJobFromDialog()
+            if accepted then
+                break
+            end
+            task.wait(0.5)
+            acceptAttempts = acceptAttempts + 1
+        end
+
+        if not AutoFarmEnabled then break end
+
+        -- TAHAP 4: Verifikasi Job Aktif & Baca Target Penerima
+        UpdateStatus("WAIT_FOR_JOB_TARGET", "Memverifikasi job & mendeteksi target...")
         local detectedTarget = nil
         local detectSource = nil
         local detectTimeout = 8
@@ -447,28 +679,32 @@ local function RunAutoFarmCycle()
         if not AutoFarmEnabled then break end
 
         if not detectedTarget then
-            print("[NYU HUB] Target delivery belum terdeteksi. Silakan periksa via tombol Run Quest Diagnostics jika job perlu interaksi manual awal.")
-            task.wait(2)
+            UpdateStatus("WAIT_FOR_JOB_TARGET", "Target belum terdeteksi. Mengulang interaksi Bunta...")
+            task.wait(1.5)
             continue
         end
 
-        print(string.format("[NYU HUB] Target terdeteksi: '%s' via %s", detectedTarget, detectSource))
+        UpdateStatus("JOB_ACCEPTED", string.format("Target: %s (via %s)", detectedTarget, detectSource), detectedTarget)
         Window:Notify({
             title = Config.Name,
-            content = "Target: " .. detectedTarget,
+            content = "Job Aktif: Antar ke " .. detectedTarget,
         })
 
-        -- TAHAP 4: Navigasi ke Penerima
-        CurrentFarmState = "NAVIGATE_TO_RECEIVER"
-        print("[NYU HUB] State:", CurrentFarmState, "Target:", detectedTarget)
+        task.wait(0.5)
+        if not AutoFarmEnabled then break end
+
+        -- TAHAP 5: Navigasi ke Penerima & Serahkan Paket
+        UpdateStatus("DELIVERING", "Teleport ke penerima: " .. detectedTarget, detectedTarget)
         local targetModel = FindNPCModel(detectedTarget)
         if targetModel then
-            local targetPart = targetModel:FindFirstChild("HumanoidRootPart") or targetModel.PrimaryPart or targetModel:FindFirstChildWhichIsA("BasePart")
+            local targetPart = targetModel:FindFirstChild("HumanoidRootPart")
+                or targetModel.PrimaryPart
+                or targetModel:FindFirstChildWhichIsA("BasePart")
             if targetPart then
                 SafeTeleport(targetPart.CFrame * CFrame.new(0, 0, 3))
             end
         else
-            print(string.format("[NYU HUB] Model target '%s' belum ditemukan di Workspace. Mengirim sinyal penyelesaian.", detectedTarget))
+            print(string.format("[NYU HUB] Model '%s' belum ditemukan di workspace. Menyelesaikan via network.", detectedTarget))
         end
 
         local waitReceiver = 0
@@ -478,26 +714,41 @@ local function RunAutoFarmCycle()
         end
         if not AutoFarmEnabled then break end
 
-        -- TAHAP 5: Selesaikan Delivery
-        CurrentFarmState = "COMPLETING_DELIVERY"
-        print("[NYU HUB] State:", CurrentFarmState)
+        -- Memicu interaksi penerima dan menyelesaikan quest
         if targetModel then
-            TryTriggerPrompt(targetModel)
+            local prompt = targetModel:FindFirstChildWhichIsA("ProximityPrompt", true)
+            if prompt and fireproximityprompt then
+                pcall(function() fireproximityprompt(prompt) end)
+            end
         end
         TryCompleteDelivery(detectedTarget)
 
-        -- TAHAP 6: Jeda Siklus
-        CurrentFarmState = "COOLDOWN"
-        print("[NYU HUB] Siklus selesai. Jeda sebelum mengulang...")
-        local cd = 3
-        while cd > 0 and AutoFarmEnabled do
-            task.wait(1)
-            cd = cd - 1
+        UpdateStatus("DELIVERY_COMPLETE", "Paket diserahkan ke " .. detectedTarget, detectedTarget)
+        task.wait(1.5)
+        if not AutoFarmEnabled then break end
+
+        -- TAHAP 6: Kembali ke Bunta & Persiapan Siklus Berikutnya
+        UpdateStatus("RETURNING_TO_BUNTA", "Kembali ke Fujiwara Bunta untuk job berikutnya...")
+        SafeTeleport(CFrame.new(BUNTA_POSITION))
+
+        -- Tunggu hingga target aktif sebelumnya terhapus dari tracker
+        local clearTimer = 0
+        while clearTimer < 4 and AutoFarmEnabled do
+            local current = DetectActiveDeliveryTarget()
+            if not current or current ~= detectedTarget then
+                break
+            end
+            task.wait(0.5)
+            clearTimer = clearTimer + 0.5
         end
+
+        if not AutoFarmEnabled then break end
+
+        UpdateStatus("COOLDOWN", "Siklus selesai. Memulai job baru...")
+        task.wait(1.5)
     end
 
-    CurrentFarmState = "IDLE"
-    print("[NYU HUB] State:", CurrentFarmState)
+    UpdateStatus("IDLE", "Auto Farm dihentikan.", "-")
 end
 
 -- 6.2 Auto Farm Tofu Toggle
@@ -527,13 +778,13 @@ UtilitiesTab:CreateToggle({
                 task.cancel(FarmThread)
                 FarmThread = nil
             end
-            CurrentFarmState = "IDLE"
+            UpdateStatus("IDLE", "Auto Farm dimatikan oleh pengguna.", "-")
 
             Window:Notify({
                 title = Config.Name,
                 content = "Auto Farm Tofu dimatikan.",
             })
-            print("[NYU HUB] Auto Farm Tofu: OFF (Proses dihentikan)")
+            print("[NYU HUB] Auto Farm Tofu: OFF")
         end
     end,
 })
@@ -541,13 +792,9 @@ UtilitiesTab:CreateToggle({
 -- 6.3 Tombol Diagnostik Status Quest
 UtilitiesTab:CreateButton({
     name = "Run Quest Diagnostics",
-    description = "Cek atribut player, GUI, dan status quest aktif di console (F9)",
+    description = "Cek atribut player, GUI dialog, dan salin ke clipboard",
 
     callback = function()
-        Window:Notify({
-            title = Config.Name,
-            content = "Diagnostik dijalankan. Buka console F9.",
-        })
         RunQuestDiagnostics()
     end,
 })
