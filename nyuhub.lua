@@ -220,18 +220,7 @@ local function GetRootPart()
     return character:WaitForChild("HumanoidRootPart", 5)
 end
 
-local function SafeTeleport(targetCFrame)
-    local root = GetRootPart()
-    if not root then return false end
-    local character = LocalPlayer.Character
-    if character then
-        character:PivotTo(targetCFrame)
-        return true
-    end
-    return false
-end
-
--- Teleport dengan verifikasi jarak fisik dan stabilisasi posisi
+-- Teleport dengan verifikasi jarak fisik aktual dan stabilisasi kecepatan
 local function TeleportToPosition(targetPos, maxWaitSeconds)
     maxWaitSeconds = maxWaitSeconds or 6
     local root = GetRootPart()
@@ -243,7 +232,7 @@ local function TeleportToPosition(targetPos, maxWaitSeconds)
     local targetV3 = typeof(targetPos) == "CFrame" and targetPos.Position or targetPos
     local targetCF = typeof(targetPos) == "CFrame" and targetPos or CFrame.new(targetPos)
 
-    -- Nolkan kecepatan linear dan angular agar karakter tidak meluncur atau mental
+    -- Nolkan kecepatan physics linear dan angular agar karakter tidak meluncur
     pcall(function()
         root.AssemblyLinearVelocity = Vector3.zero
         root.AssemblyAngularVelocity = Vector3.zero
@@ -279,6 +268,10 @@ local function TeleportToPosition(targetPos, maxWaitSeconds)
     return false
 end
 
+local function SafeTeleport(targetCFrame)
+    return TeleportToPosition(targetCFrame, 5)
+end
+
 local function FindNPCModel(npcName)
     if not npcName or #npcName == 0 then return nil end
     local workspace = game:GetService("Workspace")
@@ -307,7 +300,7 @@ local function ClickGuiButton(btn)
 
     local clicked = false
 
-    -- Metode 1: firesignal (jika didukung executor)
+    -- Metode 1: firesignal
     if firesignal then
         pcall(function()
             firesignal(btn.MouseButton1Click)
@@ -408,24 +401,19 @@ local function InteractWithBunta(buntaModel)
     return interacted
 end
 
--- Deteksi dan klik tombol opsi dialog dua tahap dengan filter teks terlarang
-local function FindAndClickDialogOption(targetPhrase, forbiddenPhrase, stageName)
+-- Pindai seluruh tombol aktif di PlayerGui (mengecualikan Rayfield / NYU HUB dan container non-interaktif)
+local function GetActiveDialogueButtons()
     local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
-    if not playerGui then return false end
+    if not playerGui then return {} end
 
-    local foundOptions = {}
-    local chosenButton = nil
-    local chosenText = ""
-
-    local lowerTarget = targetPhrase:lower()
-    local lowerForbidden = forbiddenPhrase and forbiddenPhrase:lower() or nil
+    local buttons = {}
 
     for _, gui in ipairs(playerGui:GetChildren()) do
         if gui:IsA("ScreenGui") and gui.Enabled then
             local gName = gui.Name:lower()
-            -- Abaikan GUI NYU HUB dan Rayfield
             if not gName:find("rayfield") and not gName:find("nyu") then
                 for _, desc in ipairs(gui:GetDescendants()) do
+                    -- HANYA GuiButton asli (TextButton / ImageButton), BUKAN Frame/PromptFrame
                     if desc:IsA("GuiButton") and desc.Visible then
                         local btnText = ""
                         if desc:IsA("TextButton") and #desc.Text > 0 then
@@ -440,30 +428,47 @@ local function FindAndClickDialogOption(targetPhrase, forbiddenPhrase, stageName
                         end
 
                         local cleanText = btnText:gsub("%s+", " "):match("^%s*(.-)%s*$") or ""
-                        if #cleanText > 0 then
-                            table.insert(foundOptions, {button = desc, text = cleanText})
-
-                            local lowerClean = cleanText:lower()
-                            if lowerClean:find(lowerTarget, 1, true) then
-                                if not lowerForbidden or not lowerClean:find(lowerForbidden, 1, true) then
-                                    chosenButton = desc
-                                    chosenText = cleanText
-                                end
-                            end
-                        end
+                        table.insert(buttons, {
+                            instance = desc,
+                            name = desc.Name,
+                            text = cleanText,
+                            guiName = gui.Name,
+                        })
                     end
                 end
             end
         end
-        if chosenButton then break end
+    end
+
+    return buttons
+end
+
+-- Deteksi dan klik tombol opsi dialog dua tahap dengan filter teks terlarang
+local function FindAndClickDialogOption(targetPhrase, forbiddenPhrase, stageName)
+    local buttons = GetActiveDialogueButtons()
+    local chosenButton = nil
+    local chosenText = ""
+
+    local lowerTarget = targetPhrase:lower()
+    local lowerForbidden = forbiddenPhrase and forbiddenPhrase:lower() or nil
+
+    local optionSummary = {}
+    for i, btn in ipairs(buttons) do
+        if #btn.text > 0 then
+            table.insert(optionSummary, string.format("[%d] '%s'", i, btn.text))
+
+            local lowerClean = btn.text:lower()
+            if lowerClean:find(lowerTarget, 1, true) then
+                if not lowerForbidden or not lowerClean:find(lowerForbidden, 1, true) then
+                    chosenButton = btn.instance
+                    chosenText = btn.text
+                end
+            end
+        end
     end
 
     -- Cetak seluruh opsi dialog yang terdeteksi di layar
-    if #foundOptions > 0 then
-        local optionSummary = {}
-        for i, opt in ipairs(foundOptions) do
-            table.insert(optionSummary, string.format("[%d] '%s'", i, opt.text))
-        end
+    if #optionSummary > 0 then
         print(string.format("[NYU HUB DIALOG] [%s] Opsi terdeteksi di layar: %s", stageName, table.concat(optionSummary, " | ")))
     end
 
@@ -471,6 +476,107 @@ local function FindAndClickDialogOption(targetPhrase, forbiddenPhrase, stageName
         print(string.format("[NYU HUB DIALOG] [%s] MEMILIH: '%s'", stageName, chosenText))
         local clickOk = ClickGuiButton(chosenButton)
         return clickOk
+    end
+
+    return false
+end
+
+-- Menangani dialog lanjutan (percakapan/typewriter) dengan opsi Skip/Continue yang benar
+local function HandleIntermediateDialogue(nextTargetPhrase, maxWaitSeconds, contextLabel)
+    local elapsed = 0
+    while elapsed < maxWaitSeconds and AutoFarmEnabled do
+        local buttons = GetActiveDialogueButtons()
+
+        -- 1. Cek apakah opsi tujuan berikutnya sudah muncul di layar
+        for _, btn in ipairs(buttons) do
+            if btn.text:lower():find(nextTargetPhrase:lower(), 1, true) then
+                print(string.format("[NYU HUB DIALOG] [%s] Opsi berikutnya ('%s') telah terdeteksi. Lanjut ke tahap pemilihan.", contextLabel, btn.text))
+                return true
+            end
+        end
+
+        -- 2. Cek apakah ada tombol Skip/Continue/Next yang sah
+        local advanceBtn = nil
+        for _, btn in ipairs(buttons) do
+            local lowerText = btn.text:lower()
+            local lowerName = btn.name:lower()
+
+            -- Filter ketat: tombol skip/continue tidak boleh merupakan opsi pilihan branching
+            local isBranchingOption = lowerText:find("job for me", 1, true)
+                or lowerText:find("for sale", 1, true)
+                or lowerText:find("take it", 1, true)
+                or lowerText:find("nevermind", 1, true)
+
+            if not isBranchingOption then
+                if lowerText:find("skip", 1, true)
+                    or lowerText:find("continue", 1, true)
+                    or lowerText:find("next", 1, true)
+                    or lowerText:find("lanjut", 1, true)
+                    or lowerText:find("lewati", 1, true)
+                    or lowerText:find("tap to", 1, true)
+                    or lowerText:find("click to", 1, true)
+                    or lowerText == "..."
+                    or lowerText == ">"
+                    or lowerName:find("skip", 1, true)
+                    or lowerName:find("continue", 1, true)
+                    or lowerName:find("next", 1, true)
+                    or lowerName:find("advance", 1, true) then
+                    advanceBtn = btn
+                    break
+                end
+            end
+        end
+
+        if advanceBtn then
+            print(string.format("[NYU HUB DIALOG] [%s] Menekan tombol lanjutan/skip: '%s' (Button: %s)", contextLabel, advanceBtn.text, advanceBtn.name))
+            ClickGuiButton(advanceBtn.instance)
+            task.wait(0.6) -- Beri waktu transisi dialog
+        else
+            -- Tidak ada tombol skip eksplisit, beri waktu dialog bergulir secara otomatis
+            task.wait(0.4)
+        end
+
+        elapsed = elapsed + 0.5
+    end
+
+    return false
+end
+
+-- Menangani dialog penutup setelah konfirmasi job diterima
+local function HandleClosingDialogue(maxWaitSeconds)
+    local elapsed = 0
+    while elapsed < maxWaitSeconds and AutoFarmEnabled do
+        local buttons = GetActiveDialogueButtons()
+        local advanceBtn = nil
+
+        for _, btn in ipairs(buttons) do
+            local lowerText = btn.text:lower()
+            local lowerName = btn.name:lower()
+
+            if lowerText:find("skip", 1, true)
+                or lowerText:find("continue", 1, true)
+                or lowerText:find("next", 1, true)
+                or lowerText:find("close", 1, true)
+                or lowerText:find("tutup", 1, true)
+                or lowerText:find("lanjut", 1, true)
+                or lowerText:find("ok", 1, true)
+                or lowerName:find("skip", 1, true)
+                or lowerName:find("continue", 1, true)
+                or lowerName:find("close", 1, true) then
+                advanceBtn = btn
+                break
+            end
+        end
+
+        if advanceBtn then
+            print(string.format("[NYU HUB DIALOG] [Penutup] Menekan tombol lanjutan penutup: '%s'", advanceBtn.text))
+            ClickGuiButton(advanceBtn.instance)
+            task.wait(0.6)
+        else
+            task.wait(0.4)
+        end
+
+        elapsed = elapsed + 0.5
     end
 
     return false
@@ -684,19 +790,22 @@ local function RunQuestDiagnostics()
     })
 end
 
+-- =========================================
+-- STATE MACHINE AUTO FARM LENGKAP
+-- =========================================
+
 local function RunAutoFarmCycle()
     while AutoFarmEnabled do
         -- TAHAP 1: Navigasi ke Fujiwara Bunta & Verifikasi Posisi Fisik
         UpdateStatus("NAVIGATING_TO_BUNTA", "Teleport & verifikasi posisi di Fujiwara Bunta...")
         local arrived = TeleportToPosition(BUNTA_POSITION, 6)
         if not arrived then
-            warn("[NYU HUB] Karakter belum mencapai posisi Bunta. Mengulang teleport...")
+            warn("[NYU HUB] Karakter belum mencapai posisi Bunta (timeout). Mengulang navigasi...")
             task.wait(1)
             continue
         end
         if not AutoFarmEnabled then break end
 
-        -- Verifikasi keberadaan model Bunta di dekat karakter
         local buntaModel = FindNPCModel(BUNTA_NAME)
         if not buntaModel then
             warn("[NYU HUB] Model NPC Bunta belum dimuat di workspace. Menunggu...")
@@ -704,11 +813,11 @@ local function RunAutoFarmCycle()
             continue
         end
 
-        -- Jeda stabilisasi posisi sebelum interaksi
+        -- Jeda stabilisasi posisi sebelum interaksi fisik
         task.wait(0.6)
         if not AutoFarmEnabled then break end
 
-        -- TAHAP 2: Buka Dialog Bunta & Pilih Opsi Tahap 1 ("Do you have a job for me?")
+        -- TAHAP 2: Buka Dialog Bunta & Pilih "Do you have a job for me?"
         UpdateStatus("OPENING_DIALOG", "Memicu dialog dengan Fujiwara Bunta...")
         local stage1Accepted = false
         local interactAttempts = 0
@@ -716,39 +825,39 @@ local function RunAutoFarmCycle()
 
         while interactAttempts < maxInteractAttempts and AutoFarmEnabled do
             interactAttempts = interactAttempts + 1
-            print(string.format("[NYU HUB] Interaksi Bunta percobaan #%d...", interactAttempts))
+            print(string.format("[NYU HUB] Percobaan interaksi Bunta #%d...", interactAttempts))
             InteractWithBunta(buntaModel)
 
-            -- Tunggu dialog tahap 1 muncul dan klik "Do you have a job for me?"
-            local waitS1 = 0
-            while waitS1 < 2.0 and AutoFarmEnabled do
-                task.wait(0.4)
-                waitS1 = waitS1 + 0.4
-                if FindAndClickDialogOption("job for me", "for sale", "Tahap 1") then
-                    stage1Accepted = true
-                    break
-                end
-            end
+            -- Cek dialog pengantar (jika ada skip/continue sebelum opsi muncul)
+            HandleIntermediateDialogue("job for me", 2.0, "Intro Dialog")
 
-            if stage1Accepted then
+            -- Coba pilih opsi tahap 1: "Do you have a job for me?"
+            if FindAndClickDialogOption("job for me", "for sale", "Tahap 1") then
+                stage1Accepted = true
                 break
             end
+
             task.wait(0.8)
         end
 
         if not AutoFarmEnabled then break end
 
         if not stage1Accepted then
-            warn("[NYU HUB] Dialog Tahap 1 ('Do you have a job for me?') belum berhasil dipilih. Mengulang dari navigasi...")
+            warn("[NYU HUB] Opsi Tahap 1 ('Do you have a job for me?') belum berhasil dipilih. Mengulang dari navigasi...")
             task.wait(1.5)
             continue
         end
 
-        -- TAHAP 3: Tunggu & Pilih Opsi Tahap 2 ("Sure, I'll take it.")
-        UpdateStatus("APPLYING_JOB_S2", "Menunggu dialog konfirmasi: 'Sure, I\\'ll take it.'...")
-        task.wait(0.8)
+        -- TAHAP 3: Lewati Dialog Lanjutan (Intermediate 1) hingga "Sure, I'll take it." Muncul
+        UpdateStatus("ADVANCING_DIALOG_1", "Menangani dialog lanjutan & menunggu opsi konfirmasi...")
+        task.wait(0.5)
         if not AutoFarmEnabled then break end
 
+        local stage2Ready = HandleIntermediateDialogue("take it", 8, "Intermediate 1")
+        if not AutoFarmEnabled then break end
+
+        -- TAHAP 4: Pilih Opsi Tahap 2 ("Sure, I'll take it.")
+        UpdateStatus("APPLYING_JOB_S2", "Memilih opsi konfirmasi: 'Sure, I\\'ll take it.'...")
         local stage2Accepted = false
         local s2Timeout = 6
         local s2Elapsed = 0
@@ -765,13 +874,21 @@ local function RunAutoFarmCycle()
         if not AutoFarmEnabled then break end
 
         if not stage2Accepted then
-            warn("[NYU HUB] Dialog Tahap 2 ('Sure, I\\'ll take it.') belum berhasil dipilih. Mengulang interaksi...")
+            warn("[NYU HUB] Opsi Tahap 2 ('Sure, I\\'ll take it.') belum berhasil dipilih. Mengulang siklus...")
             task.wait(1.5)
             continue
         end
 
-        -- TAHAP 4: Verifikasi Job Aktif & Baca Target Penerima
-        UpdateStatus("WAIT_FOR_JOB_TARGET", "Memverifikasi job aktif & mendeteksi target penerima...")
+        -- TAHAP 5: Lewati Dialog Penutup (Intermediate 2) jika ada
+        UpdateStatus("ADVANCING_DIALOG_2", "Menangani dialog penutup...")
+        task.wait(0.5)
+        if not AutoFarmEnabled then break end
+
+        HandleClosingDialogue(5)
+        if not AutoFarmEnabled then break end
+
+        -- TAHAP 6: Verifikasi Job Aktif & Baca Target Penerima
+        UpdateStatus("WAIT_FOR_JOB_TARGET", "Memverifikasi job aktif & membaca target penerima...")
         local detectedTarget = nil
         local detectSource = nil
         local detectTimeout = 10
@@ -789,7 +906,7 @@ local function RunAutoFarmCycle()
         if not AutoFarmEnabled then break end
 
         if not detectedTarget then
-            warn("[NYU HUB] Target job belum terdeteksi setelah konfirmasi dialog. Mengulang siklus...")
+            warn("[NYU HUB] Target job belum terverifikasi setelah dialog selesai. Mengulang siklus...")
             task.wait(2)
             continue
         end
@@ -804,7 +921,7 @@ local function RunAutoFarmCycle()
         task.wait(0.5)
         if not AutoFarmEnabled then break end
 
-        -- TAHAP 5: Navigasi ke Penerima & Serahkan Paket
+        -- TAHAP 7: Navigasi ke Penerima & Serahkan Paket
         UpdateStatus("DELIVERING", "Teleport ke penerima: " .. detectedTarget, detectedTarget)
         local targetModel = FindNPCModel(detectedTarget)
         if targetModel then
@@ -838,14 +955,15 @@ local function RunAutoFarmCycle()
         task.wait(1.5)
         if not AutoFarmEnabled then break end
 
-        -- TAHAP 6: Kembali ke Bunta & Verifikasi Posisi Selesai
+        -- TAHAP 8: Kembali ke Bunta & Verifikasi Posisi Selesai
         UpdateStatus("RETURNING_TO_BUNTA", "Kembali ke Fujiwara Bunta untuk job berikutnya...")
         local backArrived = TeleportToPosition(BUNTA_POSITION, 6)
         if not backArrived then
-            warn("[NYU HUB] Verifikasi posisi kembali ke Bunta timeout. Mencoba ulang...")
+            warn("[NYU HUB] Verifikasi posisi kembali ke Bunta timeout. Melakukan teleport ulang...")
+            TeleportToPosition(BUNTA_POSITION, 4)
         end
 
-        -- Tunggu hingga target aktif sebelumnya benar-benar terhapus dari tracker
+        -- TAHAP 9: Tunggu tracker quest lama bersih sebelum siklus berikutnya
         local clearTimer = 0
         while clearTimer < 4 and AutoFarmEnabled do
             local current = DetectActiveDeliveryTarget()
@@ -858,7 +976,7 @@ local function RunAutoFarmCycle()
 
         if not AutoFarmEnabled then break end
 
-        -- Jeda stabilisasi posisi sebelum memulai job baru
+        -- Jeda stabilisasi posisi sebelum memulai siklus baru
         UpdateStatus("COOLDOWN", "Siklus selesai. Siap memulai job baru...")
         task.wait(1.0)
     end
