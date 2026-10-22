@@ -1,6 +1,6 @@
 --[[
     NYU HUB
-    Version: 1.1.0
+    Version: 1.1.1
     Module: Foundation + Utility Tools
     UI Library: Rayfield Gen2 Stable
 
@@ -35,24 +35,21 @@ end
 
 local Config = {
     Name = "NYU HUB",
-    Version = "1.1.0",
-    Subtitle = "Utility Tools v1.1.0",
+    Version = "1.1.1",
+    Subtitle = "Utility Tools v1.1.1",
 
     WalkSpeed = {
         Default = 16,
         Minimum = 16,
         Maximum = 50,
         Increment = 1,
-        DEBUG = false,
 },
 
     Tabs = {
         Home = "Home",
         Utilities = "Utilities",
         Settings = "Settings",
-        DEBUG = false,
 },
-    DEBUG = false,
 }
 
 -- =========================================
@@ -75,7 +72,6 @@ local Window = Rayfield:CreateWindow({
     name = Config.Name,
     subtitle = Config.Subtitle,
     sidebarLayout = true,
-    DEBUG = false,
 })
 
 -- =========================================
@@ -84,7 +80,6 @@ local Window = Rayfield:CreateWindow({
 
 local HomeTab = Window:CreateTab({
     name = Config.Tabs.Home,
-    DEBUG = false,
 })
 
 -- 5.1 Notification Test
@@ -97,10 +92,8 @@ HomeTab:CreateButton({
         Window:Notify({
             title = Config.Name,
             content = "Foundation berhasil merespons!",
-            DEBUG = false,
 })
     end,
-    DEBUG = false,
 })
 
 -- 5.2 Example Toggle
@@ -112,7 +105,6 @@ HomeTab:CreateToggle({
     callback = function(enabled)
         print("[NYU HUB] Example Toggle:", enabled)
     end,
-    DEBUG = false,
 })
 
 -- 5.3 Example Slider
@@ -120,14 +112,12 @@ HomeTab:CreateToggle({
 HomeTab:CreateSlider({
     name = "Example Slider",
     range = {1, 100},
-},
     increment = 1,
     value = 50,
 
     callback = function(value)
         print("[NYU HUB] Example Slider:", value)
     end,
-    DEBUG = false,
 })
 
 -- =========================================
@@ -136,7 +126,6 @@ HomeTab:CreateSlider({
 
 local UtilitiesTab = Window:CreateTab({
     name = Config.Tabs.Utilities,
-    DEBUG = false,
 })
 
 -- 6.1 Utility Test
@@ -149,10 +138,8 @@ UtilitiesTab:CreateButton({
         Window:Notify({
             title = Config.Name,
             content = "Utilities tab berfungsi!",
-            DEBUG = false,
 })
     end,
-    DEBUG = false,
 })
 
 -- 6.2 Walk Speed
@@ -162,7 +149,6 @@ UtilitiesTab:CreateSlider({
     range = {
         Config.WalkSpeed.Minimum,
         Config.WalkSpeed.Maximum,
-        DEBUG = false,
 },
     increment = Config.WalkSpeed.Increment,
     value = Config.WalkSpeed.Default,
@@ -181,7 +167,6 @@ UtilitiesTab:CreateSlider({
 
         print("[NYU HUB] Walk Speed:", value)
     end,
-    DEBUG = false,
 })
 
 -- =========================================
@@ -203,12 +188,10 @@ pcall(function()
         StatusComponent = UtilitiesTab:CreateText({
             name = "Auto Farm Status",
             text = "IDLE - Siap digunakan",
-            DEBUG = false,
 })
     elseif UtilitiesTab.CreateDivider then
         StatusComponent = UtilitiesTab:CreateDivider({
             text = "Status: IDLE",
-            DEBUG = false,
 })
     end
 end)
@@ -575,7 +558,6 @@ local BUNTA_CONVERSATION_SIGNATURES = {
     "are you sure you want to",
     "good to know, now go out there",
     "break the tofu",
-    DEBUG = false,
 }
 
 -- Mencari container ScreenGui/Frame spesifik dialog Fujiwara Bunta
@@ -625,27 +607,12 @@ local function InspectBuntaDialogue()
             optionNevermind = nil,
             advanceBtn = nil,
             isJobAcceptedNarration = false,
-            DEBUG = false,
         }
-            isOpen = false,
-            container = nil,
-            gui = nil,
-            narration = "",
-    
-},
-            optionJob = nil,
-            optionSale = nil,
-            optionTakeIt = nil,
-            optionNevermind = nil,
-            advanceBtn = nil,
-            isJobAcceptedNarration = false,
-            DEBUG = false,
-}
     end
 
-    local narrationList = {    DEBUG = false,
+    local narrationList = {
 }
-    local buttons = {    DEBUG = false,
+    local buttons = {
 }
     local optJob = nil
     local optSale = nil
@@ -679,7 +646,6 @@ local function InspectBuntaDialogue()
                 instance = desc,
                 name = desc.Name,
                 text = clean,
-                DEBUG = false,
 }
             table.insert(buttons, btnInfo)
 
@@ -731,7 +697,6 @@ local function InspectBuntaDialogue()
         optionNevermind = optNevermind,
         advanceBtn = advanceBtn,
         isJobAcceptedNarration = isAcceptedNarration,
-        DEBUG = false,
 }
 end
 
@@ -765,7 +730,6 @@ local function DetectActiveDeliveryTarget()
         "DeliveryDestination",
         "ActiveDelivery",
         "Target",
-        DEBUG = false,
 }
     for _, attrName in ipairs(checkAttrs) do
         local val = LocalPlayer:GetAttribute(attrName)
@@ -775,7 +739,7 @@ local function DetectActiveDeliveryTarget()
     end
 
     -- 2. Deteksi melalui Value object di folder player (Quests, Job, dsb)
-    local checkFolders = {"Quests", "Quest", "Job", "CurrentJob", "Delivery", "PlayerData"    DEBUG = false,
+    local checkFolders = {"Quests", "Quest", "Job", "CurrentJob", "Delivery", "PlayerData"
 }
     for _, folderName in ipairs(checkFolders) do
         local folder = LocalPlayer:FindFirstChild(folderName)
@@ -849,7 +813,7 @@ local function TryCompleteDelivery(targetNPCName)
 end
 
 local function RunQuestDiagnostics()
-    local lines = {    DEBUG = false,
+    local lines = {
 }
     local function logLine(txt)
         table.insert(lines, txt)
@@ -931,7 +895,6 @@ local function RunQuestDiagnostics()
     Window:Notify({
         title = Config.Name,
         content = "Diagnostik selesai (" .. #lines .. " baris). Disalin ke clipboard!",
-        DEBUG = false,
 })
 end
 
@@ -1128,7 +1091,6 @@ local function RunAutoFarmCycle()
         Window:Notify({
             title = Config.Name,
             content = "Job Aktif: Antar ke " .. detectedTarget,
-            DEBUG = false,
 })
         task.wait(0.5)
         if not AutoFarmEnabled then break end
@@ -1205,7 +1167,6 @@ UtilitiesTab:CreateToggle({
             Window:Notify({
                 title = Config.Name,
                 content = "Auto Farm Tofu diaktifkan...",
-                DEBUG = false,
 })
             print("[NYU HUB] Auto Farm Tofu: ON")
 
@@ -1226,12 +1187,10 @@ UtilitiesTab:CreateToggle({
             Window:Notify({
                 title = Config.Name,
                 content = "Auto Farm Tofu dimatikan.",
-                DEBUG = false,
 })
             print("[NYU HUB] Auto Farm Tofu: OFF")
         end
     end,
-    DEBUG = false,
 })
 
 -- 6.3 Tombol Diagnostik Status Quest
@@ -1242,7 +1201,6 @@ UtilitiesTab:CreateButton({
     callback = function()
         RunQuestDiagnostics()
     end,
-    DEBUG = false,
 })
 
 -- =========================================
@@ -1260,7 +1218,6 @@ UtilitiesTab:CreateInput({
     callback = function(value)
         SelectedUsername = value or ""
     end,
-    DEBUG = false,
 })
 
 -- Teleport button
@@ -1275,7 +1232,6 @@ UtilitiesTab:CreateButton({
             Window:Notify({
                 title = Config.Name,
                 content = "Masukkan username terlebih dahulu.",
-                DEBUG = false,
 })
             return
         end
@@ -1294,7 +1250,6 @@ UtilitiesTab:CreateButton({
             Window:Notify({
                 title = Config.Name,
                 content = "Username tidak ditemukan di server ini.",
-                DEBUG = false,
 })
             return
         end
@@ -1303,7 +1258,6 @@ UtilitiesTab:CreateButton({
             Window:Notify({
                 title = Config.Name,
                 content = "Tidak bisa memilih akun sendiri.",
-                DEBUG = false,
 })
             return
         end
@@ -1319,7 +1273,6 @@ UtilitiesTab:CreateButton({
             Window:Notify({
                 title = Config.Name,
                 content = "Karakter kamu belum siap.",
-                DEBUG = false,
 })
             return
         end
@@ -1328,7 +1281,6 @@ UtilitiesTab:CreateButton({
             Window:Notify({
                 title = Config.Name,
                 content = "Karakter target belum siap.",
-                DEBUG = false,
 })
             return
         end
@@ -1341,12 +1293,10 @@ UtilitiesTab:CreateButton({
         Window:Notify({
             title = Config.Name,
             content = "Teleport dicoba ke " .. targetPlayer.Name,
-            DEBUG = false,
 })
 
         print("[NYU HUB] Teleport target:", targetPlayer.Name)
     end,
-    DEBUG = false,
 })
 
 -- =========================================
@@ -1355,7 +1305,6 @@ UtilitiesTab:CreateButton({
 
 local SettingsTab = Window:CreateTab({
     name = Config.Tabs.Settings,
-    DEBUG = false,
 })
 
 -- 7.1 Version Information
@@ -1368,10 +1317,8 @@ SettingsTab:CreateButton({
         Window:Notify({
             title = Config.Name,
             content = "Version " .. Config.Version,
-            DEBUG = false,
 })
     end,
-    DEBUG = false,
 })
 
 -- =========================================
