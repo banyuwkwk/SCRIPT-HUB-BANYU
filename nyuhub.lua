@@ -176,6 +176,7 @@ UtilitiesTab:CreateSlider({
 local AutoFarmEnabled = false
 local CurrentFarmState = "IDLE"
 local FarmThread = nil
+local LastDeliveredTarget = nil  -- BUG2: lacak NPC terakhir yang dideliver
 
 local BUNTA_POSITION = Vector3.new(-144.784, -11.521, 665.749)
 local BUNTA_NAME = "Fujiwara Bunta"
@@ -548,6 +549,23 @@ local function IsGuiObjectTrulyVisible(guiObj)
     return true
 end
 
+-- ====================================================
+-- BUG1 FIX: AUTO-SKIP DIALOG NARATIF
+-- Mencari semua clickable element dalam dialog container
+-- yang bukan pilihan job/konfirmasi, lalu menekannya
+-- untuk melanjutkan narasi secara otomatis.
+-- ====================================================
+
+-- Cek apakah sebuah tombol adalah pilihan penting yang TIDAK boleh di-skip
+local function IsImportantDialogChoice(btnText)
+    if not btnText then return false end
+    local lower = btnText:lower()
+    return lower:find("job for me", 1, true)
+        or lower:find("for sale", 1, true)
+        or lower:find("take it", 1, true)
+        or lower:find("nevermind", 1, true)
+end
+
 -- Kalimat signature percakapan spesifik Bunta (tidak menggunakan kata tunggal umum)
 local BUNTA_CONVERSATION_SIGNATURES = {
     "do you have a job for me",
@@ -698,6 +716,135 @@ local function InspectBuntaDialogue()
         advanceBtn = advanceBtn,
         isJobAcceptedNarration = isAcceptedNarration,
 }
+end
+
+-- Cari elemen clickable generik di dalam dialog container untuk auto-advance
+-- Ini mencari: GuiButton tanpa teks penting, Frame/ImageLabel besar,
+-- atau TextButton dengan teks naratif
+local function FindDialogAdvanceTarget(container)
+    if not container then return nil end
+
+    local candidates = {}
+
+    for _, desc in ipairs(container:GetDescendants()) do
+        if desc:IsA("GuiButton") and IsGuiObjectTrulyVisible(desc) then
+            local btnText = ""
+            if desc:IsA("TextButton") and #desc.Text > 0 then
+                btnText = desc.Text
+            else
+                for _, sub in ipairs(desc:GetDescendants()) do
+                    if sub:IsA("TextLabel") and IsGuiObjectTrulyVisible(sub) and #sub.Text > 0 then
+                        btnText = sub.Text
+                        break
+                    end
+                end
+            end
+
+            if not IsImportantDialogChoice(btnText) then
+                local priority = 0
+                local lowerText = btnText:lower()
+                local lowerName = desc.Name:lower()
+
+                if lowerText:find("skip", 1, true)
+                    or lowerText:find("continue", 1, true)
+                    or lowerText:find("next", 1, true)
+                    or lowerText:find("lanjut", 1, true)
+                    or lowerText:find("lewati", 1, true)
+                    or lowerText:find("ok", 1, true)
+                    or lowerText:find("close", 1, true)
+                    or lowerName:find("skip", 1, true)
+                    or lowerName:find("continue", 1, true)
+                    or lowerName:find("next", 1, true)
+                    or lowerName:find("advance", 1, true)
+                    or lowerName:find("close", 1, true) then
+                    priority = 10
+                elseif #btnText <= 2 then
+                    priority = 5
+                elseif desc:IsA("ImageButton") then
+                    local size = desc.AbsoluteSize
+                    if size.X > 100 and size.Y > 40 then
+                        priority = 7
+                    else
+                        priority = 3
+                    end
+                else
+                    priority = 2
+                end
+
+                table.insert(candidates, {instance = desc, text = btnText, priority = priority})
+            end
+        end
+    end
+
+    table.sort(candidates, function(a, b) return a.priority > b.priority end)
+
+    if #candidates > 0 then
+        return candidates[1]
+    end
+    return nil
+end
+
+-- Auto-skip dialog naratif: tekan elemen advance secara berurutan
+-- sampai dialog selesai atau pilihan penting muncul
+local function AutoSkipNarrativeDialog()
+    local maxSkipAttempts = 15
+    local skipCount = 0
+
+    while skipCount < maxSkipAttempts and AutoFarmEnabled do
+        local dInfo = InspectBuntaDialogue()
+
+        -- Dialog sudah tertutup
+        if not dInfo.isOpen then
+            print("[NYU HUB DIALOG-SKIP] Dialog sudah tertutup setelah " .. skipCount .. " skip.")
+            return true, "DialogClosed"
+        end
+
+        -- Pilihan penting muncul - berhenti skip, serahkan ke alur utama
+        if dInfo.optionJob or dInfo.optionTakeIt or dInfo.optionSale then
+            print("[NYU HUB DIALOG-SKIP] Pilihan penting terdeteksi, menghentikan auto-skip.")
+            return true, "ImportantChoiceFound"
+        end
+
+        -- Narasi job accepted - berhenti skip, serahkan ke alur utama
+        if dInfo.isJobAcceptedNarration then
+            print("[NYU HUB DIALOG-SKIP] Narasi job accepted terdeteksi, menghentikan auto-skip.")
+            return true, "JobAcceptedNarration"
+        end
+
+        -- Cari elemen advance menggunakan finder yang lebih luas
+        local advTarget = FindDialogAdvanceTarget(dInfo.container)
+
+        if advTarget then
+            print(string.format("[NYU HUB DIALOG-SKIP] Skip #%d: menekan '%s' (Name: %s, Priority: %d)",
+                skipCount + 1, advTarget.text, advTarget.instance.Name, advTarget.priority))
+            ClickGuiButton(advTarget.instance)
+            skipCount = skipCount + 1
+            task.wait(0.4)
+        else
+            -- Tidak ada tombol yang bisa ditekan, coba klik container itu sendiri
+            if dInfo.container and dInfo.container:IsA("GuiButton") then
+                print("[NYU HUB DIALOG-SKIP] Skip #" .. (skipCount + 1) .. ": menekan container langsung.")
+                ClickGuiButton(dInfo.container)
+                skipCount = skipCount + 1
+                task.wait(0.4)
+            else
+                -- Tidak ada yang bisa diklik, tunggu sebentar dan cek ulang
+                print("[NYU HUB DIALOG-SKIP] Tidak ada elemen advance. Menunggu perubahan dialog...")
+                task.wait(0.6)
+                local dInfo2 = InspectBuntaDialogue()
+                if not dInfo2.isOpen then
+                    return true, "DialogClosedAfterWait"
+                end
+                if dInfo2.narration == dInfo.narration and not dInfo2.optionJob and not dInfo2.optionTakeIt then
+                    print("[NYU HUB DIALOG-SKIP] Dialog tampak stuck, keluar dari auto-skip.")
+                    return false, "Stuck"
+                end
+            end
+        end
+    end
+
+    warn("[NYU HUB DIALOG-SKIP] Mencapai batas maksimum skip (" .. maxSkipAttempts .. ").")
+    return false, "MaxSkipReached"
 end
 
 local function GetRedNetwork()
@@ -926,11 +1073,16 @@ local function RunAutoFarmCycle()
 
         -- ----------------------------------------------------
         -- TAHAP 3: PERIKSA JOB AKTIF (Jika sudah ada, lewati interaksi)
+        -- BUG2 FIX: Jika activeTarget sama dengan LastDeliveredTarget,
+        -- anggap itu data quest lama yang belum bersih - jangan skip interaksi Bunta
         -- ----------------------------------------------------
         local activeTarget = DetectActiveDeliveryTarget()
-        if activeTarget then
+        if activeTarget and activeTarget ~= LastDeliveredTarget then
             print(string.format("[NYU HUB] Job delivery '%s' sudah aktif. Langsung menuju tahap pengiriman.", activeTarget))
         else
+            if activeTarget and activeTarget == LastDeliveredTarget then
+                print(string.format("[NYU HUB] Target '%s' sama dengan delivery terakhir - kemungkinan data quest lama, paksa interaksi Bunta.", activeTarget))
+            end
             -- ----------------------------------------------------
             -- TAHAP 4: INTERACT_WITH_NPC & VERIFY_DIALOG_OPEN
             -- ----------------------------------------------------
@@ -988,6 +1140,15 @@ local function RunAutoFarmCycle()
             end
 
             -- ----------------------------------------------------
+            -- TAHAP 4.5: AUTO-SKIP DIALOG NARATIF AWAL (BUG1 FIX)
+            -- Skip semua narasi sebelum pilihan job muncul
+            -- ----------------------------------------------------
+            UpdateStatus("AUTO_SKIP_DIALOG", "Melewati dialog naratif awal...")
+            AutoSkipNarrativeDialog()
+            task.wait(0.3)
+            if not AutoFarmEnabled then break end
+
+            -- ----------------------------------------------------
             -- TAHAP 5: SELECT_DIALOG_OPTION (Tahap 1 & Tahap 2)
             -- ----------------------------------------------------
             dInfo = InspectBuntaDialogue()
@@ -998,6 +1159,11 @@ local function RunAutoFarmCycle()
                 print(string.format("[NYU HUB DIALOG] Menekan tombol opsi Tahap 1: '%s'", dInfo.optionJob.text))
                 ClickGuiButton(dInfo.optionJob.instance)
                 task.wait(0.8)
+
+                -- BUG1 FIX: Auto-skip narasi setelah memilih job
+                UpdateStatus("AUTO_SKIP_DIALOG", "Melewati dialog setelah memilih job...")
+                AutoSkipNarrativeDialog()
+                task.wait(0.3)
             end
 
             if not AutoFarmEnabled then break end
@@ -1045,22 +1211,10 @@ local function RunAutoFarmCycle()
             -- ----------------------------------------------------
             -- TAHAP 6: VERIFY_JOB (Tutup dialog & pastikan target terdeteksi)
             -- ----------------------------------------------------
-            UpdateStatus("VERIFY_JOB", "Memverifikasi job aktif & membaca target penerima...")
-            dInfo = InspectBuntaDialogue()
-            local closeAttempts = 0
-            local maxClose = 5
-            while dInfo.isOpen and closeAttempts < maxClose and AutoFarmEnabled do
-                closeAttempts = closeAttempts + 1
-                if dInfo.advanceBtn then
-                    ClickGuiButton(dInfo.advanceBtn.instance)
-                elseif #dInfo.buttons > 0 then
-                    ClickGuiButton(dInfo.buttons[1].instance)
-                else
-                    -- no actionable button, wait for narration to finish
-                end
-                task.wait(0.5)
-                dInfo = InspectBuntaDialogue()
-            end
+            -- BUG1 FIX: Auto-skip narasi setelah konfirmasi job (menutup dialog)
+            UpdateStatus("VERIFY_JOB", "Memverifikasi job aktif & melewati narasi sisa...")
+            AutoSkipNarrativeDialog()
+            task.wait(0.3)
         end
 
         -- Polling verifikasi data quest aktif
@@ -1122,6 +1276,10 @@ local function RunAutoFarmCycle()
         end
         TryCompleteDelivery(detectedTarget)
 
+        -- BUG2 FIX: Simpan target terakhir yang dideliver, bersihkan referensi lama
+        LastDeliveredTarget = detectedTarget
+        targetModel = nil  -- Bersihkan referensi model NPC penerima
+
         UpdateStatus("DELIVERY_COMPLETE", "Paket diserahkan ke " .. detectedTarget, detectedTarget)
         task.wait(1.5)
         if not AutoFarmEnabled then break end
@@ -1136,6 +1294,25 @@ local function RunAutoFarmCycle()
             TeleportAndVerifyArrival(BUNTA_POSITION, 4, 10)
         end
 
+        -- BUG2 FIX: Verifikasi bahwa kita berada dekat Bunta sebelum melanjutkan
+        UpdateStatus("VERIFY_RETURN", "Memverifikasi posisi di dekat Fujiwara Bunta...")
+        local buntaReturnModel = FindNPCModel(BUNTA_NAME)
+        if buntaReturnModel then
+            local buntaReturnPart = buntaReturnModel:FindFirstChild("HumanoidRootPart")
+                or buntaReturnModel.PrimaryPart
+                or buntaReturnModel:FindFirstChildWhichIsA("BasePart")
+            if buntaReturnPart then
+                local returnRoot = GetRootPart()
+                if returnRoot then
+                    local distToBunta = (returnRoot.Position - buntaReturnPart.Position).Magnitude
+                    if distToBunta > 15 then
+                        warn(string.format("[NYU HUB] Masih terlalu jauh dari Bunta (%.1f studs). Re-teleport...", distToBunta))
+                        TeleportAndVerifyArrival(BUNTA_POSITION, 6, 8)
+                    end
+                end
+            end
+        end
+
         -- Tunggu hingga data quest lama bersih sebelum siklus berikutnya
         UpdateStatus("COOLDOWN", "Menunggu quest lama bersih & persiapan siklus baru...")
         local clearTimer = 0
@@ -1147,6 +1324,9 @@ local function RunAutoFarmCycle()
             task.wait(0.5)
             clearTimer = clearTimer + 0.5
         end
+
+        -- BUG2 FIX: Reset referensi agar siklus baru tidak menggunakan target lama
+        print(string.format("[NYU HUB] Siklus selesai. LastDeliveredTarget = '%s'. Memulai siklus baru.", tostring(LastDeliveredTarget)))
 
         if not AutoFarmEnabled then break end
         task.wait(1.0)
