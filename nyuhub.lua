@@ -119,7 +119,7 @@ HomeTab:CreateToggle({
 
 HomeTab:CreateSlider({
     name = "Example Slider",
-    range = { 1, 100     DEBUG = false,
+    range = {1, 100},
 },
     increment = 1,
     value = 50,
@@ -619,7 +619,19 @@ local function InspectBuntaDialogue()
             container = nil,
             gui = nil,
             narration = "",
-            buttons = {    DEBUG = false,
+            optionJob = nil,
+            optionSale = nil,
+            optionTakeIt = nil,
+            optionNevermind = nil,
+            advanceBtn = nil,
+            isJobAcceptedNarration = false,
+            DEBUG = false,
+        }
+            isOpen = false,
+            container = nil,
+            gui = nil,
+            narration = "",
+    
 },
             optionJob = nil,
             optionSale = nil,
